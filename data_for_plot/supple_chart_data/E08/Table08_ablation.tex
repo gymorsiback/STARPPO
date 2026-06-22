@@ -1,0 +1,17 @@
+\begin{table}[htbp]
+\centering
+\caption{E08: Component Ablation for Workflow and Topology Awareness (3-step chain, $n=200$).}
+\label{tab:e08_ablation}
+\resizebox{\linewidth}{!}{%
+\begin{tabular}{lcccrrrrc}
+\toprule
+Variant & Workflow & Topology & Future $R$ & Avg Lat.\ (ms) & Std (ms) & Avg Cost & SLA Viol.\ (\%) & $\Delta$ Lat \\
+\midrule
+Full Model & Yes & Yes & Yes & 707.8 & 506.6 & 0.0184 & 0.5 & +0.0% \\
+w/o Workflow & No & Yes & Yes & 763.1 & 547.0 & 0.0226 & 1.0 & +7.8% \\
+w/o Topology & Yes & No & Yes & 763.0 & 547.0 & 0.0215 & 1.0 & +7.8% \\
+w/o Future Reward & Yes & Yes & No & 737.2 & 527.6 & 0.0188 & 0.5 & +4.2% \\
+Greedy Baseline & No & No & No & 1131.8 & 491.9 & 0.0306 & 1.0 & +59.9% \\
+\bottomrule
+\end{tabular}}
+\end{table}

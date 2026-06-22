@@ -1,0 +1,5 @@
+pattern,n,mean,std,median,Q1,Q3,IQR,P95,P99,lo_whisker,hi_whisker,n_outliers,whisker_rule,outlier_rule
+Uniform (Training),600,2422.6,1243.95,2223.27,1482.17,3102.84,1620.66,4556.16,6154.66,520.92,5533.83,13,1.5*IQR,beyond whiskers
+Poisson,600,2838.07,1460.31,2511.2,1790.74,3736.15,1945.41,5563.16,6893.2,520.43,6654.27,11,1.5*IQR,beyond whiskers
+Bursty,600,3419.0,1602.77,3228.76,2128.34,4588.59,2460.25,6342.28,7177.68,444.76,8278.97,1,1.5*IQR,beyond whiskers
+On-Off,600,3063.69,1401.96,2879.91,2066.39,3879.0,1812.61,5611.82,7323.48,456.63,6597.92,12,1.5*IQR,beyond whiskers

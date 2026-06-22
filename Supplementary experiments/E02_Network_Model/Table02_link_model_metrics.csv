@@ -1,0 +1,5 @@
+Algorithm,Link Model,R_ij (Mbps),T_base (ms),Net Latency (ms),Compute (ms),Tx (ms),Avg Total Latency (ms),Std (ms),Avg Cost (USD),Std Cost
+Greedy,Service-Overlay,100.0000,150.0000,149.2667,223.9855,0.1434,1866.26,544.51,0.0610,0.0413
+Random,Service-Overlay,99.8000,23.6830,23.3529,421.6717,0.1442,2225.12,1220.17,0.1061,0.0840
+STAR-PPO-Overlay,Service-Overlay,96.7000,0.2210,0.3697,243.9266,0.1487,1221.48,567.20,0.0435,0.0310
+STAR-PPO-Wireless,Wireless-Edge,100.0000,0.2118,0.3551,241.8230,0.1434,1210.89,566.02,0.0409,0.0282

@@ -1,0 +1,17 @@
+\begin{table}[htbp]
+\centering
+\caption{E05: Temporal Reliability Analysis — Recovery Time and SLA Violation Rate
+Under Three Failure Regimes ($N=200$ windows).
+Burst failure uses Markov ON/OFF with $P_{{\rm ON}\to{\rm OFF}}=0.03$, $P_{{\rm OFF}\to{\rm ON}}=0.15$.}
+\label{tab:e05_reliability}
+\resizebox{\linewidth}{!}{%
+\begin{tabular}{lrrrrrr}
+\toprule
+Failure Regime & SLA Viol.\ (\%) & Avg Lat.\ (ms) & Mean $p_{\rm rel}$ & Avg $J_R^{\rm rel}$ & Fail.\ Win. & Mean Recovery (win) \\
+\midrule
+No Failure & 0.0 & 2113.7 & 1.0 & 0.0 & 0 & — \\
+Indep. Random & 0.0 & 2112.5 & 0.9481 & 0.0519 & 0 & — \\
+Burst (Markov ON/OFF) & 11.5 & 4348.0 & 0.8502 & 0.1498 & 23 & 5.75 \\
+\bottomrule
+\end{tabular}}
+\end{table}

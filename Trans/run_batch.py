@@ -14,11 +14,11 @@ def run_experiment(seed, gpu_id, n_epochs):
         "--seed", str(seed),
         "--seq_len", "5"
     ]
-    
+
     log_dir = os.path.join("results", "Trans", "logs")
     os.makedirs(log_dir, exist_ok=True)
     log_file = os.path.join(log_dir, f"Trans_seed_{seed}.log")
-    
+
     with open(log_file, "w") as f:
         subprocess.run(cmd, stdout=f, stderr=subprocess.STDOUT)
     print(f"Finished experiment with seed {seed}, log saved to {log_file}")
@@ -31,10 +31,11 @@ def main():
     args = parser.parse_args()
 
     seeds = [args.start_seed + i for i in range(args.n)]
-    
+
     for seed in seeds:
         run_experiment(seed, 0, args.epochs)
 
+    # After all runs, plot
     print("All runs completed. Generating plots...")
     subprocess.run([sys.executable, "Trans/plot_batch.py"])
 

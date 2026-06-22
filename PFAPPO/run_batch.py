@@ -10,17 +10,22 @@ def run_batch_training():
     parser.add_argument('--episodes', type=int, default=200, help='Episodes per epoch')
     args = parser.parse_args()
 
+    # Generate seeds based on n
+    # Start from 100 to avoid mixing with previous runs if possible, or just standard 42+i
+    # Let's use 100+i to clearly distinguish this new batch
     seeds = [100 + i for i in range(args.n)]
 
+    # Path to train.py
     script_path = os.path.join(os.path.dirname(__file__), 'train.py')
-    
+
     print(f"Starting batch training for {len(seeds)} seeds: {seeds}")
-    
+
     for seed in seeds:
         print(f"\n{'='*40}")
         print(f"Running Seed: {seed}")
         print(f"{'='*40}")
 
+        # Construct command
         cmd = [
             'python', script_path,
             '--epochs', str(args.epochs),
@@ -28,12 +33,13 @@ def run_batch_training():
             '--seed', str(seed)
         ]
 
+        # Run process
         try:
             subprocess.run(cmd, check=True)
             print(f"Seed {seed} completed successfully.")
         except subprocess.CalledProcessError as e:
             print(f"Error running seed {seed}: {e}")
-            
+
     print("\nAll training runs completed.")
 
 if __name__ == '__main__':

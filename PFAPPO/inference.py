@@ -4,21 +4,24 @@ import json
 import numpy as np
 import torch
 
+# 添加根目录路径
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 
 from env import WorkflowDataset, WorkflowMoEEnv
 from agent import PFAPPOAgent
 
 def compute_resource_weights(env, candidate_server_ids, w1=0.35, w2=0.3, w3=0.35):
+    """Calculate Resource-Aware Weights WITH COST for candidate servers only"""
     num_servers = len(candidate_server_ids)
-    
+
     caps = np.array([env.servers[sid].normalized_compute for sid in candidate_server_ids], dtype=np.float32)
     norm_caps = caps
-    
+
     current_time = env.current_time_ms
     busy_times = np.array([max(0.0, env.busy_until[sid] - current_time) for sid in candidate_server_ids], dtype=np.float32)
     norm_queues = np.clip(busy_times / 5000.0, 0.0, 1.0)
 
+    # Cost Advantage
     server_min_costs = []
     for sid in candidate_server_ids:
         models_on_server = [mi for mi in env.ds.model_instances if mi.server_id == sid]
@@ -27,21 +30,22 @@ def compute_resource_weights(env, candidate_server_ids, w1=0.35, w2=0.3, w3=0.35
         else:
             min_cost = 0.060
         server_min_costs.append(min_cost)
-    
+
     costs = np.array(server_min_costs, dtype=np.float32)
     cost_advantage = 1.0 - np.clip((costs - 0.0015) / (0.060 - 0.0015), 0, 1.0)
-    
+
     weights = (w1 * norm_caps + w3 * cost_advantage) / (1.0 + w2 * norm_queues)
-    
+
     max_w = np.max(weights)
     if max_w > 1e-9:
         weights = weights / max_w
     else:
         weights = np.ones_like(weights) / num_servers
-    
+
     return weights
 
 def build_state_vector(state_dict, dwa_weights):
+    """Construct the 7-dim state vector"""
     return np.array([
         state_dict['step_norm'],
         state_dict['task_lon'],
@@ -53,20 +57,24 @@ def build_state_vector(state_dict, dwa_weights):
     ], dtype=np.float32)
 
 def run_inference(
-    data_root='/root/autodl-tmp/MOE111/data',
+    data_root='./data',
     model_path=None,
     device='cpu',
     episodes=100,
-    test_region='Server3' 
+    test_region='Server3'  # 跨域泛化测试
 ):
+    # Load Dataset and Environment
     ds = WorkflowDataset(data_root, split='test', regions=[test_region])
     env = WorkflowMoEEnv(ds)
 
+    # 模型训练时的服务器数量（Server2有50个服务器）
     MODEL_NUM_SERVERS = 500
 
+    # 实际环境的服务器数量
     actual_num_servers = len(env.servers)
     server_ids = sorted(list(env.servers.keys()))
 
+    # 跨域适配：只使用前MODEL_NUM_SERVERS个服务器作为候选
     if actual_num_servers > MODEL_NUM_SERVERS:
         candidate_server_ids = server_ids[:MODEL_NUM_SERVERS]
         print(f"[跨域适配] {test_region}有{actual_num_servers}个服务器，只使用前{MODEL_NUM_SERVERS}个作为候选")
@@ -77,94 +85,110 @@ def run_inference(
         candidate_server_ids = server_ids
         print(f"[同域测试] {test_region}有{actual_num_servers}个服务器，与训练一致")
 
+    # Initialize Agent with MODEL_NUM_SERVERS (模型原始维度)
     agent = PFAPPOAgent(state_dim=7, num_servers=MODEL_NUM_SERVERS, device=device)
 
+    # Load Model
     if model_path and os.path.exists(model_path):
         agent.actor.load_state_dict(torch.load(model_path, map_location=device))
         print(f"Loaded model from: {model_path}")
     else:
         print("No model loaded. Using random policy.")
-    
+
     agent.actor.eval()
- 
+
+    # Fixed DWA weights for inference (using balanced weights or learned ones)
     w = np.array([1/3, 1/3, 1/3], dtype=np.float32)
 
+    # 建立候选服务器到模型实例的映射
     def map_action_to_instance(action_idx, candidate_sids, env):
+        """将模型输出的action (0~49)映射到实际的model instance"""
         if action_idx >= len(candidate_sids):
             action_idx = len(candidate_sids) - 1
         target_server_id = candidate_sids[action_idx]
+        # 找到该服务器上的第一个模型实例
         for idx, mi in enumerate(env.ds.model_instances):
             if mi.server_id == target_server_id:
                 return idx
+        # fallback: 返回0
         return 0
 
+    # Results
     latencies = []
     costs = []
     rewards = []
     switches_list = []
     inference_times = []
-    
+
     import time
-    
+
     print(f"Running inference on {episodes} episodes in {test_region}...")
-    
+
     for i in range(episodes):
         if i % 10 == 0:
             print(f"Episode {i}/{episodes}")
-        
+
         task = ds.tasks[i % len(ds.tasks)]
         state_dict = env.reset(task)
-        
+
         ep_lat = 0
         ep_cost = 0
         ep_reward = 0
         ep_inference_time = 0
         done = False
-        
+
         while not done:
             s_vec = build_state_vector(state_dict, w)
             r_weights = compute_resource_weights(env, candidate_server_ids)
- 
+
+            # 如果候选服务器数 < MODEL_NUM_SERVERS，需要padding
             if len(r_weights) < MODEL_NUM_SERVERS:
                 padded_weights = np.zeros(MODEL_NUM_SERVERS, dtype=np.float32)
                 padded_weights[:len(r_weights)] = r_weights
                 r_weights = padded_weights
-            
+
             s_tensor = torch.FloatTensor(s_vec).unsqueeze(0).to(device)
             w_tensor = torch.FloatTensor(r_weights).unsqueeze(0).to(device)
 
+            # Resource-aware action selection (Enhanced PFAPPO) - time it
             t0 = time.time()
             with torch.no_grad():
                 logits = agent.actor(s_tensor, w_tensor)
-     
+
+                # PFAPPO特色：增强资源感知引导
+                # 使用与训练相同的guidance策略
                 rw_tensor = torch.FloatTensor(r_weights).to(device)
                 rw_centered = rw_tensor - rw_tensor.mean()
                 rw_std = rw_tensor.std() + 1e-6
                 rw_normalized = rw_centered / rw_std
-     
+
+                # guidance_alpha=1.0 (推理时使用最强引导), temperature=1.5 (与训练一致)
                 enhanced_logits = logits.squeeze(0) + 1.0 * rw_normalized * 1.5
-    
+
+                # 只从候选服务器中选择（截断logits到候选数量）
                 valid_logits = enhanced_logits[:len(candidate_server_ids)]
                 action = torch.argmax(valid_logits).item()
             ep_inference_time += (time.time() - t0) * 1000
- 
+
+            # 将action映射到实际的model instance
             env_action = map_action_to_instance(action, candidate_server_ids, env)
             next_state_dict, (rL, rC, rS), done, info = env.step(env_action)
-            
+
             r_scalar = w[0]*rL + w[1]*rC + w[2]*rS
-            
+
             ep_lat += info['latency_ms']
             ep_cost += info['cost']
             ep_reward += r_scalar
-            
+
             state_dict = next_state_dict
-        
+
         latencies.append(ep_lat)
         costs.append(ep_cost)
         rewards.append(ep_reward)
         switches_list.append(env.ep_switches)
         inference_times.append(ep_inference_time)
 
+    # Statistics
     print("\n" + "="*50)
     print("Inference Results:")
     print("="*50)
@@ -176,19 +200,20 @@ def run_inference(
     print(f"Avg Inference Time: {np.mean(inference_times):.3f} ms")
     print("="*50)
 
+    # Save detailed results for analysis
     if model_path:
         output_dir = 'inference/results'
         os.makedirs(output_dir, exist_ok=True)
         model_basename = os.path.basename(model_path).replace('.pt', '')
         npz_path = os.path.join(output_dir, f'PFAPPO_{model_basename}_detailed.npz')
-        np.savez(npz_path, 
+        np.savez(npz_path,
                  latencies=np.array(latencies),
                  costs=np.array(costs),
                  rewards=np.array(rewards),
                  switches=np.array(switches_list),
                  inference_times=np.array(inference_times))
         print(f"Detailed results saved to: {npz_path}")
-    
+
     return {
         'latencies': latencies,
         'costs': costs,
@@ -202,9 +227,9 @@ if __name__ == '__main__':
     parser.add_argument('--episodes', type=int, default=100)
     parser.add_argument('--device', type=str, default='cpu')
     parser.add_argument('--region', type=str, default='Server3', help='Test region')
-    parser.add_argument('--data', type=str, default='/root/autodl-tmp/MOE111/data', help='Data root')
+    parser.add_argument('--data', type=str, default='./data', help='Data root')
     args = parser.parse_args()
-    
-    run_inference(data_root=args.data, model_path=args.model, episodes=args.episodes, 
+
+    run_inference(data_root=args.data, model_path=args.model, episodes=args.episodes,
                   device=args.device, test_region=args.region)
 

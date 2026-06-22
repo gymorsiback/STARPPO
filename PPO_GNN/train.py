@@ -8,6 +8,7 @@ import torch.nn as nn
 from collections import deque
 from torch_geometric.data import Data, Batch
 
+# Add root directory to path to import env and utils
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 
 from env import WorkflowDataset, WorkflowMoEEnv
@@ -16,18 +17,21 @@ from PPO_GNN.agent import PPOAgent
 
 
 def build_server_model_mapping(ds, env):
+    """
+    Build a mapping from (server_index, model_type) -> list of model_instance_idx
+    """
     server_ids = sorted(list(env.servers.keys()))
     server_id_to_idx = {sid: i for i, sid in enumerate(server_ids)}
-    
+
     mapping = {i: {} for i in range(len(server_ids))}
-    
+
     for mi in ds.model_instances:
         server_idx = server_id_to_idx.get(mi.server_id)
         if server_idx is not None:
             if mi.model_type not in mapping[server_idx]:
                 mapping[server_idx][mi.model_type] = []
             mapping[server_idx][mi.model_type].append(mi.idx)
-    
+
     return mapping, server_ids
 
 
@@ -36,26 +40,36 @@ def map_server_action_to_instance(server_idx, required_model_type, mapping, ds, 
         instances = mapping[server_idx].get(required_model_type, [])
         if instances:
             return instances[0]
-    
+
     for mi in ds.model_instances:
         if mi.model_type == required_model_type:
             return mi.idx
-            
+
     return fallback_action
 
 
+# Cache for server models to avoid repeated searching
 _SERVER_MODELS_CACHE = {}
 
 def get_static_node_features(env):
+    """
+    Extract static node features for GNN: [Compute, CostAdvantage]
+    Returns tensor of shape [num_servers, 2]
+    Calculated once per episode (since cost multiplier is fixed per episode)
+    """
     server_ids = sorted(list(env.servers.keys()))
 
+    # Cache initialization
     global _SERVER_MODELS_CACHE
     if not _SERVER_MODELS_CACHE:
         for sid in server_ids:
             _SERVER_MODELS_CACHE[sid] = [mi for mi in env.ds.model_instances if mi.server_id == sid]
 
+    # 1. Compute Power (Normalized)
     caps = np.array([env.servers[sid].normalized_compute for sid in server_ids], dtype=np.float32)
-    norm_caps = caps 
+    norm_caps = caps # Already normalized around 1.0
+
+    # 2. Cost Advantage (Normalized)
     server_min_costs = []
     for sid in server_ids:
         models_on_server = _SERVER_MODELS_CACHE[sid]
@@ -65,16 +79,21 @@ def get_static_node_features(env):
         else:
             min_cost = 0.060 * 2.2
         server_min_costs.append(min_cost)
-    
+
     costs = np.array(server_min_costs, dtype=np.float32)
     cost_min = 0.0015 * 0.4
     cost_max = 0.060 * 2.2
     cost_advantage = 1.0 - np.clip((costs - cost_min) / (cost_max - cost_min), 0, 1.0)
- 
-    features = np.stack([norm_caps, cost_advantage], axis=1) 
+
+    # Stack features
+    features = np.stack([norm_caps, cost_advantage], axis=1) # [N, 2]
     return torch.FloatTensor(features)
 
 def get_dynamic_node_features(env, server_ids):
+    """
+    Extract dynamic node features for GNN: [Queue]
+    Returns tensor of shape [num_servers, 1]
+    """
     current_time = env.current_time_ms
     busy_times = np.array([max(0.0, env.busy_until[sid] - current_time) for sid in server_ids], dtype=np.float32)
     norm_queues = np.clip(busy_times / 5000.0, 0.0, 1.0)
@@ -82,6 +101,9 @@ def get_dynamic_node_features(env, server_ids):
 
 
 def build_state_vector(state_dict, dwa_weights):
+    """
+    Construct the 7-dim global state vector
+    """
     return np.array([
         state_dict['step_norm'],
         state_dict['task_lon'],
@@ -94,76 +116,95 @@ def build_state_vector(state_dict, dwa_weights):
 
 
 def train(
-    data_root='/root/autodl-tmp/MOE111/data',
+    data_root='./data',
     total_epochs=100,
     episodes_per_epoch=200,
-    lr=3e-4,  
-    batch_size=512,  
+    lr=3e-4,  # Balanced LR for larger network
+    batch_size=512,  # 500 服务器用 512，1000 服务器用 64
     device='cpu',
     seed=300,
     regions=None,
     output_dir=None
 ):
+    # Set seeds
     random.seed(seed)
     np.random.seed(seed)
     torch.manual_seed(seed)
     if device == 'cuda':
         torch.cuda.manual_seed(seed)
 
+    # Default regions
     if regions is None:
         regions = ['Server2']
 
+    # Init Env
     ds = WorkflowDataset(data_root, split='train', regions=regions)
     env = WorkflowMoEEnv(ds)
     num_servers = len(env.servers)
 
+    # Server mapping
     server_model_mapping, server_ids = build_server_model_mapping(ds, env)
-   
-    k_neighbors = min(20, num_servers - 1)  
-    
+
+    # Pre-compute Edge Index (k-NN Sparse Graph for scalability)
+    # For large graphs (>100 nodes), use k-NN instead of fully connected
+    k_neighbors = min(20, num_servers - 1)  # Connect to k nearest neighbors
+
     if num_servers > 100:
+        # Build k-NN graph based on geographic distance
         print(f"Building k-NN sparse graph (k={k_neighbors}) for {num_servers} servers...")
         coords = np.array([[env.servers[sid].lon, env.servers[sid].lat] for sid in server_ids])
-  
+
+        # Compute pairwise distances using numpy (no scipy needed)
         diff = coords[:, np.newaxis, :] - coords[np.newaxis, :, :]
         distances = np.sqrt(np.sum(diff**2, axis=2))
-   
+
+        # For each node, find k nearest neighbors
         src_list = []
         dst_list = []
         for i in range(num_servers):
+            # Get k nearest (excluding self)
             nearest = np.argsort(distances[i])[1:k_neighbors+1]
             for j in nearest:
                 src_list.append(i)
                 dst_list.append(j)
+                # Add reverse edge for undirected graph
                 src_list.append(j)
                 dst_list.append(i)
 
+        # Remove duplicates
         edges = set(zip(src_list, dst_list))
         src_list = [e[0] for e in edges]
         dst_list = [e[1] for e in edges]
-        
+
         edge_index = torch.tensor([src_list, dst_list], dtype=torch.long).to(device)
         print(f"Sparse graph: {len(src_list)} edges (vs {num_servers**2} fully connected)")
     else:
+        # For small graphs, use fully connected
         src_nodes = torch.arange(num_servers).repeat_interleave(num_servers)
         dst_nodes = torch.arange(num_servers).repeat(num_servers)
         edge_index = torch.stack([src_nodes, dst_nodes], dim=0).to(device)
-    
+
     edge_attr = torch.ones((edge_index.size(1), 1), dtype=torch.float32).to(device)
 
+    # Candidate mask (always ones for this env)
     candidate_mask = torch.ones(num_servers, dtype=torch.bool, device=device)
-  
+
+    # Init Agent
+    # node_feat_dim=3: [Compute, Queue, CostAdvantage]
+    # global_feat_dim=7: [step_norm, task_lon, task_lat, prev_region, w0, w1, w2]
     agent = PPOAgent(
         device=device,
         lr=lr,
         node_feat_dim=3,
         global_feat_dim=7,
-        hidden_dim=128  
+        hidden_dim=128  # Increased capacity for better learning
     )
 
+    # Schedulers
     lr_lambda = lambda epoch: 1.0 - 0.8 * (epoch / total_epochs)
     optimizer_scheduler = torch.optim.lr_scheduler.LambdaLR(agent.optimizer, lr_lambda=lr_lambda)
 
+    # Directories
     run_id = generate_run_id('ppo_gnn')
     project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
     if output_dir is not None:
@@ -178,39 +219,45 @@ def train(
     print(f"Starting PPO_GNN Training: {run_id}")
     print(f"Device: {device}, Epochs: {total_epochs}, Seed: {seed}")
 
-    w = np.array([0.50, 0.45, 0.05], dtype=np.float32)  
-    loss_moving_avg = np.zeros(3) 
+    # DWA Params - Fixed weights to prevent drift toward Switch Penalty
+    # Focus on Latency and Cost optimization
+    w = np.array([0.50, 0.45, 0.05], dtype=np.float32)  # Minimize Switch weight
+    loss_moving_avg = np.zeros(3)
     T = 3.0
-    freeze_epoch = int(total_epochs * 0.3)  
-    dwa_start_epoch = 5  
+    freeze_epoch = int(total_epochs * 0.3)  # Freeze early to keep focus on Lat/Cost
+    dwa_start_epoch = 5  # Start DWA later
 
+    # History
     L_hist = {'L': [], 'C': [], 'S': []}
     weights_hist = []
 
+    # 全局累积变量
     all_episode_returns = []
     all_episode_latency = []
     all_episode_cost = []
-    
+
     for epoch in range(total_epochs):
+        # Entropy Decay
         entropy_decay_ratio = min(1.0, epoch / (total_epochs * 0.9))
         current_entropy = 0.03 * (1.0 - entropy_decay_ratio) + 0.002 * entropy_decay_ratio
-        
+
         episode_returns = []
         episode_latency = []
         episode_cost = []
- 
+
+        # DWA Update Logic
         if epoch >= dwa_start_epoch and epoch < freeze_epoch:
             current_losses = np.array([
                 np.mean(ep_L_vals) if 'ep_L_vals' in locals() and len(ep_L_vals) > 0 else 0.0,
                 np.mean(ep_C_vals) if 'ep_C_vals' in locals() and len(ep_C_vals) > 0 else 0.0,
                 np.mean(ep_S_vals) if 'ep_S_vals' in locals() and len(ep_S_vals) > 0 else 0.0
             ])
-            
+
             if np.all(loss_moving_avg == 0):
                 loss_moving_avg = current_losses + 1e-6
             else:
                 loss_moving_avg = 0.15 * current_losses + 0.85 * loss_moving_avg
-            
+
             if np.mean(np.abs(current_losses)) > 1e-5:
                 r_n = current_losses / (loss_moving_avg + 1e-7)
                 r_n = np.clip(r_n, 0.7, 1.3)
@@ -223,34 +270,40 @@ def train(
                         min_weight = 0.15
                         w = np.clip(w, min_weight, 1.0 - 2*min_weight)
                         w = w / np.sum(w)
-        
+
         ep_L_vals = []
         ep_C_vals = []
         ep_S_vals = []
-        
-        memory_buffer = [] 
-        
+
+        memory_buffer = []
+
         for ep in range(episodes_per_epoch):
             task = random.choice(ds.tasks)
             state_dict = env.reset(task)
             done = False
- 
+
+            # Precompute static features for this episode
             static_feats = get_static_node_features(env).to(device)
-            
+
             traj_data = []
             traj_rewards = []
             traj_dones = []
             traj_values = []
             traj_actions = []
             traj_logprobs = []
-            
+
             while not done:
+                # 1. Build Data Object
                 dynamic_feat = get_dynamic_node_features(env, server_ids).to(device)
-           
+
+                # Combine static [N, 2] and dynamic [N, 1] -> [N, 3]
+                # Order: Compute, Queue, Cost -> Compute(0), Queue(dynamic), Cost(1)
+                # get_static_node_features returns [Compute, CostAdvantage]
+                # We need [Compute, Queue, CostAdvantage]
                 node_feats = torch.cat([static_feats[:, 0:1], dynamic_feat, static_feats[:, 1:2]], dim=1)
-                
+
                 global_feat = torch.FloatTensor(build_state_vector(state_dict, w)).unsqueeze(0).to(device)
-                
+
                 data = Data(
                     x=node_feats,
                     edge_index=edge_index,
@@ -260,92 +313,101 @@ def train(
                     num_nodes=num_servers
                 )
 
+                # 2. Act
                 server_action_t, log_prob_t, value_t = agent.act(data)
-                
+
                 server_action = server_action_t.item()
                 log_prob = log_prob_t.item()
                 value = value_t.item()
-  
+
+                # 3. Map Action & Step
                 _, _, req_type = env.cur_steps[env.step_idx]
                 if req_type is None:
                     req_type = env.cur_task['RequiredModelTypes'][env.step_idx]
-                
+
                 action = map_server_action_to_instance(
                     server_action, str(req_type), server_model_mapping, ds
                 )
-                
+
                 next_state_dict, (rL, rC, rS), done, info = env.step(action)
-                
+
                 scalar_reward = w[0]*rL + w[1]*rC + w[2]*rS
-                
-                data.action_node_idx = server_action_t.squeeze() 
+
+                data.action_node_idx = server_action_t.squeeze() # Store as scalar to ensure [B] after batching
                 data.old_log_prob = log_prob_t
                 data.value = value_t
-                
+
                 traj_data.append(data)
                 traj_rewards.append(scalar_reward)
                 traj_dones.append(done)
                 traj_values.append(value)
                 traj_actions.append(server_action)
                 traj_logprobs.append(log_prob)
-                
+
                 state_dict = next_state_dict
-                
+
                 ep_L_vals.append(-rL)
                 ep_C_vals.append(-rC)
                 ep_S_vals.append(-rS)
-                
+
             episode_returns.append(sum(traj_rewards))
             episode_latency.append(sum(env.ep_latency))
             episode_cost.append(sum(env.ep_cost))
 
+            # GAE
             next_value = 0
             returns = []
             gae = 0
             gamma = 0.99
             lam = 0.95
-            
+
             for i in reversed(range(len(traj_rewards))):
                 delta = traj_rewards[i] + gamma * next_value * (1 - traj_dones[i]) - traj_values[i]
                 gae = delta + gamma * lam * gae
                 ret = gae + traj_values[i]
                 returns.insert(0, ret)
                 next_value = traj_values[i]
-    
+
+                # Store as scalar tensors - DataLoader will stack into [B]
                 traj_data[i].ret = torch.tensor(ret, dtype=torch.float32, device=device)
                 traj_data[i].advantage = torch.tensor(gae, dtype=torch.float32, device=device)
                 traj_data[i].action = torch.tensor(traj_actions[i], dtype=torch.long, device=device)
                 traj_data[i].old_log_prob = torch.tensor(traj_logprobs[i], dtype=torch.float32, device=device)
 
             memory_buffer.extend(traj_data)
-   
+
+        # Update
+        # Corrected batch_size: Use full batch size (e.g. 1024 steps), not divided by num_servers
         update_stats = agent.update(
-            memory_buffer, 
-            batch_size=batch_size, 
+            memory_buffer,
+            batch_size=batch_size,
             ent_coef=current_entropy,
             update_iters=10
         )
-        
+
         optimizer_scheduler.step()
-        
+
         avg_ret = np.mean(episode_returns)
         avg_lat = np.mean(episode_latency)
         avg_cost = np.mean(episode_cost)
-        
+
         print(f"Epoch {epoch+1}/{total_epochs} | Ret: {avg_ret:.2f} | Lat: {avg_lat:.1f} | Cost: {avg_cost:.3f} | Loss: {update_stats['loss']:.4f}")
-        
+
         L_hist['L'].append(avg_lat)
         L_hist['C'].append(avg_cost)
         L_hist['S'].append(0.0)
         weights_hist.append(w.copy())
-  
+
+        # 累积数据
         all_episode_returns.extend(episode_returns)
         all_episode_latency.extend(episode_latency)
         all_episode_cost.extend(episode_cost)
 
+        # 模型检查点（每5个epoch保存一次）
         if (epoch+1) % 5 == 0:
              torch.save(agent.net.state_dict(), os.path.join(models_dir, f'{run_id}_model_epoch_{epoch:04d}.pt'))
 
+    # 保存合并的训练数据
     np.savez_compressed(os.path.join(run_dir, 'training_data.npz'),
              episode_returns=np.array(all_episode_returns),
              episode_latency=np.array(all_episode_latency),
@@ -370,10 +432,10 @@ if __name__ == '__main__':
     parser.add_argument('--output_dir', type=str, default=None,
                         help='Output directory for models and logs')
     parser.add_argument('--device', type=str, default='cuda' if torch.cuda.is_available() else 'cpu')
-    parser.add_argument('--data', type=str, default='/root/autodl-tmp/MOE111/data',
+    parser.add_argument('--data', type=str, default='./data',
                         help='Data directory, e.g., data or data1')
-    parser.add_argument('--batch_size', type=int, default=512,  
+    parser.add_argument('--batch_size', type=int, default=512,  # 500 服务器用 512
                         help='Batch size for PPO updates (reduce for large graphs)')
     args = parser.parse_args()
-    
+
     train(total_epochs=args.epochs, episodes_per_epoch=args.episodes, device=args.device, seed=args.seed, regions=args.regions, output_dir=args.output_dir, data_root=args.data, batch_size=args.batch_size)

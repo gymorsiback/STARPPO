@@ -1,0 +1,20 @@
+\begin{table}[htbp]
+\centering
+\caption{E03: Performance Impact of Shared Resource Contention.
+Three resource groups (Region-A Backhaul, Cloud Egress, Cross-Region WAN) with
+$W_{\rm max}$ = \{400, 300, 500\} Mbps. With contention enforces $\sum W_{ij} \leq W_{\rm max}$.}
+\label{tab:e03_contention}
+\resizebox{\linewidth}{!}{%
+\begin{tabular}{lrrrrl}
+\toprule
+Condition & Avg Lat.\ (ms) & Std (ms) & SLA Viol.\ (\%) & $Q_{\rm net}$ & Lat.\ Change \\
+\midrule
+Baseline (sum W_ij free) & 2110.6 & 26.5 & 18.29 & 0.571 & N/A \\
+Constrained (sum W_ij ≤ W_max) & 2153.0 & 62.7 & 23.07 & 0.939 & +42.4 ms (2.0%) \\
+\midrule
+Group 0: Region-A Backhaul & --- & --- & --- & --- & Congestion: 28/100 win.; R_ij degr. 2.2% \\
+Group 1: Cloud Egress & --- & --- & --- & --- & Congestion: 37/100 win.; R_ij degr. 4.1% \\
+Group 2: Cross-Region WAN & --- & --- & --- & --- & Congestion: 28/100 win.; R_ij degr. 2.7% \\
+\bottomrule
+\end{tabular}}
+\end{table}

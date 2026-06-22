@@ -1,0 +1,9 @@
+metric,value
+mean_tokens,771.0
+mean_ES_ms,385.3
+observed_mean_rho,0.0
+T_q_obs_ms,0.0
+T_q_kingman_ms,0.0
+n_samples,3000
+avg_latency_ms,2178.1
+rho_pct_below_0.1,100.0

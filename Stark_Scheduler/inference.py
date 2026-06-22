@@ -6,6 +6,7 @@ import torch
 import time
 import re
 
+# Add root to path
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 
 from env import WorkflowDataset, WorkflowMoEEnv
@@ -13,24 +14,39 @@ from Stark_Scheduler.model import StarkScheduler
 from Stark_Scheduler.dataset import OnlineExpertDataset
 
 def run_inference(args):
+    # 1. Setup Environment
+    # Determine region from args or default
+    # If args.regions is passed (from run_all_inference.py), use it.
+    # Otherwise default to 'Server2'
     if hasattr(args, 'regions') and args.regions:
         test_region = args.regions[0]
     else:
         test_region = 'Server2'
-        
+
     print(f"Testing on Region: {test_region}")
- 
+
+    # Load dataset
     ds_test = WorkflowDataset(args.data_path, split='test', regions=[test_region])
 
-    num_servers_trained = 500 
+    # IMPORTANT: We must match the trained model's server count (usually 50)
+    # If the test region has more servers (e.g. Server3 has 100), we only use the first 50.
+    num_servers_trained = 500
 
+    # Initialize env
     env = WorkflowMoEEnv(ds_test)
- 
+
+    # 2. Load Model
+    # We need to instantiate the model with the same params as training
+    # For now we hardcode defaults or infer, assuming standard training config
+    # In a perfect world, we'd save config.json with the model.
+
+    # Reset env with first task to get dimensions
     env.reset(ds_test.tasks[0])
     dummy_task, dummy_servers = OnlineExpertDataset(env).extract_structured_state(env)
     task_dim = dummy_task.shape[0]
     server_dim = dummy_servers.shape[1]
-    
+    # num_servers is forced to num_servers_trained (model output dimension)
+
     model = StarkScheduler(
         task_dim=task_dim,
         server_dim=server_dim,
@@ -41,11 +57,13 @@ def run_inference(args):
         num_decoder_layers=2
     ).to(args.device)
 
+    # Load weights
     print(f"Loading model from {args.model_path}")
     state_dict = torch.load(args.model_path, map_location=args.device)
     model.load_state_dict(state_dict)
     model.eval()
 
+    # 3. Run Inference Loop
     latencies = []
     costs = []
     rewards = []
@@ -53,11 +71,11 @@ def run_inference(args):
     inference_times = []
     violations = 0
     total_episodes = 0
-    
+
     episodes_to_run = args.episodes
-    
+
     print(f"Running inference for {episodes_to_run} episodes...")
-    
+
     for ep in range(min(episodes_to_run, len(ds_test.tasks))):
         task = ds_test.tasks[ep]
         state = env.reset(task)
@@ -67,27 +85,32 @@ def run_inference(args):
         ep_reward = 0
         ep_switches = 0
         ep_inference_time = 0
-        
+
         while not done:
+            # Prepare Input
             t0 = time.time()
-            
+
             task_feat, server_feats = OnlineExpertDataset(env).extract_structured_state(env)
- 
+
+            # Cross-domain: Only use first num_servers_trained servers
             server_feats = server_feats[:num_servers_trained]
-            
-            task_tensor = torch.FloatTensor(task_feat).unsqueeze(0).to(args.device) 
-            server_tensor = torch.FloatTensor(server_feats).unsqueeze(0).to(args.device) 
-            
+
+            task_tensor = torch.FloatTensor(task_feat).unsqueeze(0).to(args.device) # [1, D]
+            server_tensor = torch.FloatTensor(server_feats).unsqueeze(0).to(args.device) # [1, num_servers_trained, D]
+
             with torch.no_grad():
                 logits = model(task_tensor, server_tensor)
-                server_action = torch.argmax(logits, dim=1).item()  
-            
-            t1 = time.time()
-            ep_inference_time += (t1 - t0) * 1000 
+                server_action = torch.argmax(logits, dim=1).item()  # Action is server index (0-49)
 
+            t1 = time.time()
+            ep_inference_time += (t1 - t0) * 1000 # ms
+
+            # Map server action to actual model instance action
+            # Get available actions and find one on the selected server
             server_ids = sorted(list(env.servers.keys()))
             target_server_id = server_ids[server_action] if server_action < len(server_ids) else server_ids[0]
 
+            # Find a model instance on this server that matches the required type
             req_type = env.cur_task['RequiredModelTypes'][env.step_idx]
             action = None
             for idx, mi in enumerate(env.ds.model_instances):
@@ -95,39 +118,43 @@ def run_inference(args):
                     action = idx
                     break
 
+            # Fallback: any instance of the required type on candidate servers
             if action is None:
                 for idx, mi in enumerate(env.ds.model_instances):
                     if mi.model_type == req_type and mi.server_id in server_ids[:num_servers_trained]:
                         action = idx
                         break
 
+            # Last resort: first available action
             if action is None:
                 avail = env.available_actions()
                 action = avail[0] if avail else 0
-            
+
             next_state, (rL, rC, rS), done, info = env.step(action)
-            
+
             ep_latency += info.get('latency_ms', info.get('latency', 0))
             ep_cost += info.get('cost', 0)
+            # Compute scalar reward using balanced weights
             w = [0.45, 0.40, 0.15]
             ep_reward += w[0]*rL + w[1]*rC + w[2]*rS
-            
+
             if info.get('switched', False):
                 ep_switches += 1
-            
+
             if info.get('sla_violated', False):
                 violations += 1
-                
+
         latencies.append(ep_latency)
         costs.append(ep_cost)
         rewards.append(ep_reward)
         switches_list.append(ep_switches)
         steps_in_episode = len(task.get('RequiredModelTypes', [1]))
-        inference_times.append(ep_inference_time / steps_in_episode if steps_in_episode > 0 else 0) 
-        
+        inference_times.append(ep_inference_time / steps_in_episode if steps_in_episode > 0 else 0) # Avg per step
+
         if (ep + 1) % 10 == 0:
             print(f"Episode {ep+1}/{episodes_to_run} - Latency: {ep_latency:.2f}, Reward: {ep_reward:.2f}")
- 
+
+    # 4. Report & Save
     avg_lat = np.mean(latencies)
     std_lat = np.std(latencies)
     avg_cost = np.mean(costs)
@@ -136,7 +163,7 @@ def run_inference(args):
     std_reward = np.std(rewards)
     total_steps = sum(len(ds_test.tasks[i].get('RequiredModelTypes', [1])) for i in range(min(episodes_to_run, len(ds_test.tasks))))
     violation_rate = (violations / total_steps) * 100 if total_steps > 0 else 0
-    
+
     print("\n" + "="*40)
     print(f"Stark-Scheduler Inference Results ({test_region})")
     print(f"Average Latency: {avg_lat:.2f} ms (std: {std_lat:.2f})")
@@ -145,19 +172,21 @@ def run_inference(args):
     print(f"Violation Rate: {violation_rate:.2f}%")
     print("="*40 + "\n")
 
+    # Save NPZ
     timestamp = time.strftime("%Y%m%d_%H%M%S")
+    # Extract short ID from model path if possible
     model_id = "unknown"
     match = re.search(r'([a-f0-9]{6})', args.model_path)
     if match:
         model_id = match.group(1)
-        
+
     save_dir = 'inference/results'
     if not os.path.exists(save_dir):
         os.makedirs(save_dir)
-        
+
     filename = f"Stark_stark_{timestamp}_{model_id}_inference.npz"
     save_path = os.path.join(save_dir, filename)
-    
+
     np.savez(
         save_path,
         latencies=np.array(latencies),
@@ -182,13 +211,13 @@ if __name__ == "__main__":
     parser.add_argument('--episodes', type=int, default=10)
     parser.add_argument('--device', type=str, default='cuda' if torch.cuda.is_available() else 'cpu')
     parser.add_argument('--regions', nargs='+', help='Regions to test on (e.g. Server2, Server3)')
-    
+
     args = parser.parse_args()
     run_inference(args)
 
 
     save_path = os.path.join(save_dir, filename)
-    
+
     np.savez(
         save_path,
         latencies=np.array(latencies),
@@ -213,13 +242,13 @@ if __name__ == "__main__":
     parser.add_argument('--episodes', type=int, default=10)
     parser.add_argument('--device', type=str, default='cuda' if torch.cuda.is_available() else 'cpu')
     parser.add_argument('--regions', nargs='+', help='Regions to test on (e.g. Server2, Server3)')
-    
+
     args = parser.parse_args()
     run_inference(args)
 
 
     save_path = os.path.join(save_dir, filename)
-    
+
     np.savez(
         save_path,
         latencies=np.array(latencies),
@@ -244,7 +273,7 @@ if __name__ == "__main__":
     parser.add_argument('--episodes', type=int, default=10)
     parser.add_argument('--device', type=str, default='cuda' if torch.cuda.is_available() else 'cpu')
     parser.add_argument('--regions', nargs='+', help='Regions to test on (e.g. Server2, Server3)')
-    
+
     args = parser.parse_args()
     run_inference(args)
 

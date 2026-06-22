@@ -5,6 +5,10 @@ import copy
 from typing import Optional, List
 
 class Transformer(nn.Module):
+    """
+    Standard Transformer Encoder-Decoder architecture.
+    Adapted from Stark-main/lib/models/stark/transformer.py, stripped of vision-specific code.
+    """
     def __init__(self, d_model=256, nhead=8, num_encoder_layers=6,
                  num_decoder_layers=6, dim_feedforward=2048, dropout=0.1,
                  activation="relu", normalize_before=False):
@@ -31,11 +35,20 @@ class Transformer(nn.Module):
                 nn.init.xavier_uniform_(p)
 
     def forward(self, src, mask, query_embed, pos_embed):
+        # src: [SeqLen, Batch, C]
+        # mask: [Batch, SeqLen] (True means masked/padding)
+        # query_embed: [NumQueries, Batch, C]
+        # pos_embed: [SeqLen, Batch, C]
+
+        # Encoder
         memory = self.encoder(src, src_key_padding_mask=mask, pos=pos_embed)
 
+        # Decoder
+        # Target (query) is usually initialized as zeros and added with query_pos
         tgt = torch.zeros_like(query_embed)
         hs = self.decoder(tgt, memory, memory_key_padding_mask=mask,
                           pos=pos_embed, query_pos=query_embed)
+        # hs: [NumQueries, Batch, C]
         return hs, memory
 
 
@@ -77,6 +90,7 @@ class TransformerEncoderLayer(nn.Module):
                  activation="relu", normalize_before=False):
         super().__init__()
         self.self_attn = nn.MultiheadAttention(d_model, nhead, dropout=dropout)
+        # Implementation of Feedforward model
         self.linear1 = nn.Linear(d_model, dim_feedforward)
         self.dropout = nn.Dropout(dropout)
         self.linear2 = nn.Linear(dim_feedforward, d_model)
@@ -109,6 +123,7 @@ class TransformerDecoderLayer(nn.Module):
         super().__init__()
         self.self_attn = nn.MultiheadAttention(d_model, nhead, dropout=dropout)
         self.multihead_attn = nn.MultiheadAttention(d_model, nhead, dropout=dropout)
+        # Implementation of Feedforward model
         self.linear1 = nn.Linear(d_model, dim_feedforward)
         self.dropout = nn.Dropout(dropout)
         self.linear2 = nn.Linear(dim_feedforward, d_model)
@@ -147,6 +162,7 @@ def _get_clones(module, N):
 
 
 def _get_activation_fn(activation):
+    """Return an activation function given a string"""
     if activation == "relu":
         return F.relu
     if activation == "gelu":
@@ -157,25 +173,42 @@ def _get_activation_fn(activation):
 
 
 class StarkScheduler(nn.Module):
+    """
+    STARK-based Scheduler for Resource Allocation.
+    Inputs:
+        - template: Task features (the "target" we are looking to satisfy)
+        - search_region: Server features (the "search space")
+    Outputs:
+        - logits: Probability distribution over servers
+    """
     def __init__(self, task_dim, server_dim, num_servers, d_model=128, nhead=4,
                  num_encoder_layers=2, num_decoder_layers=2, dim_feedforward=256, dropout=0.1):
         super().__init__()
 
+        # 1. Backbones (Embedding Layers)
+        # Separate embeddings for Task (Template) and Server (Search Region)
+        # This replaces the ResNet backbone in Stark
         self.task_embed = nn.Sequential(
             nn.Linear(task_dim, d_model),
             nn.LayerNorm(d_model),
             nn.ReLU(),
             nn.Linear(d_model, d_model)
         )
-        
+
         self.server_embed = nn.Sequential(
             nn.Linear(server_dim, d_model),
             nn.LayerNorm(d_model),
             nn.ReLU(),
             nn.Linear(d_model, d_model)
         )
- 
-        self.pos_embed = nn.Parameter(torch.zeros(1, num_servers + 1, d_model)) 
+
+        # 2. Positional Encoding
+        # Since servers have no inherent spatial order, we use a learned embedding
+        # to represent "Server ID" or simply let the Transformer treat them as a set.
+        # Stark uses sine/cosine for pixels. Here we use learnable embeddings for slots.
+        self.pos_embed = nn.Parameter(torch.zeros(1, num_servers + 1, d_model)) # +1 for task token
+
+        # 3. Transformer Core
         self.transformer = Transformer(
             d_model=d_model, nhead=nhead,
             num_encoder_layers=num_encoder_layers,
@@ -183,31 +216,58 @@ class StarkScheduler(nn.Module):
             dim_feedforward=dim_feedforward,
             dropout=dropout
         )
- 
-        self.query_embed = nn.Embedding(1, d_model) 
-        
+
+        # 4. Prediction Head
+        # Stark uses a Box Head. We use a Classification Head over servers.
+        # We query the decoder with a single "Scheduling Query".
+        self.query_embed = nn.Embedding(1, d_model) # 1 query for "which server?"
+
         self.class_head = nn.Linear(d_model, num_servers)
-        
+
         self.d_model = d_model
         self.num_servers = num_servers
 
     def forward(self, task_feat, server_feats):
+        """
+        task_feat: [Batch, Task_Dim]
+        server_feats: [Batch, Num_Servers, Server_Dim]
+        """
         B, N, _ = server_feats.shape
-  
-        task_emb = self.task_embed(task_feat).unsqueeze(1) 
-        server_emb = self.server_embed(server_feats) 
-        src = torch.cat([task_emb, server_emb], dim=1) 
-        src = src.transpose(0, 1) 
-        pos = self.pos_embed[:, :N+1, :].transpose(0, 1).repeat(1, B, 1) 
+
+        # 1. Feature Extraction (Backbone)
+        # Template (Task)
+        task_emb = self.task_embed(task_feat).unsqueeze(1) # [B, 1, d_model]
+
+        # Search Region (Servers)
+        server_emb = self.server_embed(server_feats) # [B, N, d_model]
+
+        # Concatenate for Encoder: [Task, Server_1, ..., Server_N]
+        # This allows the encoder to contextualize the task with the available servers
+        src = torch.cat([task_emb, server_emb], dim=1) # [B, N+1, d_model]
+
+        # Transpose for Transformer: [SeqLen, Batch, d_model]
+        src = src.transpose(0, 1) # [N+1, B, d_model]
+
+        # Positional Embeddings
+        # Ensure pos_embed matches batch size and sequence length
+        pos = self.pos_embed[:, :N+1, :].transpose(0, 1).repeat(1, B, 1) # [N+1, B, d_model]
+
+        # Mask (no padding in our case usually)
         mask = torch.zeros((B, N+1), dtype=torch.bool, device=src.device)
- 
+
+        # 2. Transformer
+        # query_embed: [1, d_model] -> [1, B, d_model]
         query_embed = self.query_embed.weight.unsqueeze(1).repeat(1, B, 1)
- 
+
+        # hs: [1, B, d_model] (Output of Decoder)
+        # mem: [N+1, B, d_model] (Output of Encoder)
         hs, mem = self.transformer(src, mask, query_embed, pos)
- 
-        out_feat = hs.squeeze(0) 
-        
-        logits = self.class_head(out_feat) 
-        
+
+        # 3. Prediction Head
+        # Take the output of the decoder query
+        out_feat = hs.squeeze(0) # [B, d_model]
+
+        logits = self.class_head(out_feat) # [B, Num_Servers]
+
         return logits
 

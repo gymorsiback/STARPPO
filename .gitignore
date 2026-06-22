@@ -1,0 +1,38 @@
+# Python bytecode and tool caches
+__pycache__/
+*.py[cod]
+*$py.class
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.ipynb_checkpoints/
+
+# Local environments and secrets
+.venv/
+venv/
+env/
+.env
+.env.*
+!.env.example
+
+# IDE and operating-system metadata
+.idea/
+.vscode/
+.DS_Store
+Thumbs.db
+Desktop.ini
+
+# Runtime outputs and model checkpoints
+results/
+runs/
+logs/
+checkpoints/
+wandb/
+*.log
+*.pt
+*.pth
+*.ckpt
+
+# Large raw traces are distributed outside the Git repository.
+data1/*/request_log.csv
+data1/*/session_stats.csv

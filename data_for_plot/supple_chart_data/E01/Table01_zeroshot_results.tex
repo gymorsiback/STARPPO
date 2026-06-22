@@ -1,0 +1,19 @@
+\begin{table}[htbp]
+\centering
+\caption{E01: Strict Zero-Shot Cross-Region Transfer (Train: S1/Switzerland, Test: S3/Germany).
+All methods evaluated without any fine-tuning on the target topology.}
+\label{tab:e01_zeroshot}
+\resizebox{\linewidth}{!}{%
+\begin{tabular}{lrrrrc}
+\toprule
+Algorithm & Avg Lat.\ (ms) & P95 (ms) & P99 (ms) & SLA Viol.\ (\%) & Gap vs Retrained \\
+\midrule
+TopoFreeRL Retrained (S3) & 2151.5 & 4050.3 & 4851.8 & 19.5 & 1.000 \\
+TopoFreeRL Partition (Zero) & 2349.6 & 4461.0 & 5406.4 & 28.5 & 1.092 \\
+PF-PPO (Zero) & 3705.3 & 8028.0 & 10763.4 & 53.0 & 1.722 \\
+Equity-Trans (Zero) & 3944.2 & 9024.4 & 10765.4 & 55.5 & 1.833 \\
+A3C (Zero) & 3343.1 & 7065.9 & 8865.0 & 51.5 & 1.554 \\
+STARK (Zero) & 3646.5 & 7259.1 & 9933.7 & 55.0 & 1.695 \\
+\bottomrule
+\end{tabular}}
+\end{table}

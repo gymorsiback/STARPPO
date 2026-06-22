@@ -3,14 +3,16 @@ import torch.nn as nn
 import math
 
 class PositionalEncoding(nn.Module):
+    """可学习的位置编码"""
     def __init__(self, d_model, max_len=20):
         super(PositionalEncoding, self).__init__()
         self.pos_embedding = nn.Embedding(max_len, d_model)
-        
+
     def forward(self, x):
+        # x: [Batch, Seq, d_model]
         seq_len = x.size(1)
-        positions = torch.arange(seq_len, device=x.device).unsqueeze(0)  
-        pos_embed = self.pos_embedding(positions)  
+        positions = torch.arange(seq_len, device=x.device).unsqueeze(0)  # [1, Seq]
+        pos_embed = self.pos_embedding(positions)  # [1, Seq, d_model]
         return x + pos_embed
 
 class TransformerEncoder(nn.Module):
@@ -18,54 +20,60 @@ class TransformerEncoder(nn.Module):
         super(TransformerEncoder, self).__init__()
         self.embedding = nn.Linear(input_dim, d_model)
         self.pos_encoding = PositionalEncoding(d_model, max_seq_len)
-        
+
         encoder_layer = nn.TransformerEncoderLayer(
-            d_model=d_model, 
-            nhead=nhead, 
-            dim_feedforward=128, 
+            d_model=d_model,
+            nhead=nhead,
+            dim_feedforward=128,
             batch_first=True,
             dropout=0.1
         )
         self.transformer = nn.TransformerEncoder(encoder_layer, num_layers=num_layers)
         self.norm = nn.LayerNorm(d_model)
-        
+
     def forward(self, x):
+        # x: [Batch, Seq, Feat]
         x = self.embedding(x)
-        x = self.pos_encoding(x)  
+        x = self.pos_encoding(x)  # 添加位置编码
         x = self.transformer(x)
-        x = x[:, -1, :] 
+        # Take the last token as the sequence representation
+        x = x[:, -1, :]
         x = self.norm(x)
         return x
 
 class TransformerActorCritic(nn.Module):
+    """共享Encoder的Actor-Critic架构"""
     def __init__(self, state_dim, action_dim, d_model=64):
         super(TransformerActorCritic, self).__init__()
         self.encoder = TransformerEncoder(state_dim, d_model)
 
+        # Actor Head
         self.actor_head = nn.Sequential(
             nn.Linear(d_model, d_model),
             nn.Tanh(),
             nn.Linear(d_model, action_dim)
         )
 
+        # Critic Head
         self.critic_head = nn.Sequential(
             nn.Linear(d_model, d_model),
             nn.Tanh(),
             nn.Linear(d_model, 1)
         )
-        
+
     def forward(self, state_seq):
         feat = self.encoder(state_seq)
         return self.actor_head(feat), self.critic_head(feat)
-    
+
     def get_action_logits(self, state_seq):
         feat = self.encoder(state_seq)
         return self.actor_head(feat)
-    
+
     def get_value(self, state_seq):
         feat = self.encoder(state_seq)
         return self.critic_head(feat)
 
+# 保留旧的接口用于兼容（但不推荐使用）
 class Actor(nn.Module):
     def __init__(self, state_dim, action_dim, d_model=64):
         super(Actor, self).__init__()
@@ -75,7 +83,7 @@ class Actor(nn.Module):
             nn.Tanh(),
             nn.Linear(d_model, action_dim)
         )
-        
+
     def forward(self, state_seq):
         feat = self.encoder(state_seq)
         return self.head(feat)
@@ -89,7 +97,7 @@ class Critic(nn.Module):
             nn.Tanh(),
             nn.Linear(d_model, 1)
         )
-        
+
     def forward(self, state_seq):
         feat = self.encoder(state_seq)
         return self.head(feat)

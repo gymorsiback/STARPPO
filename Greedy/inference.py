@@ -3,86 +3,103 @@ import sys
 import numpy as np
 import time
 
+# 添加根目录路径
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 
 from env import WorkflowDataset, WorkflowMoEEnv
 
 def compute_greedy_action(env, w_lat=0.6, w_cost=0.4):
+    """
+    Greedy Strategy: Best-Fit
+    Selects the server that minimizes a weighted sum of normalized latency and cost.
+    Uses env.estimate_step() for accurate estimation consistent with environment dynamics.
+    """
     best_action = 0
     best_score = float('inf')
 
+    # 获取当前步允许的动作 (即符合模型类型要求的实例)
     candidates = env.available_actions()
- 
+
+    # 如果没有找到候选 (极少见)，则回退到所有动作
     if not candidates:
         candidates = list(range(len(env.actions)))
 
     for action_idx in candidates:
+        # 使用环境提供的估算函数
+        # returns: (step_latency_ms, cost, switch_penalty_ms)
         lat, cost, switch_ms = env.estimate_step(action_idx)
- 
-        norm_lat = lat / 2000.0 
+
+        # Normalize (rough estimates based on typical values)
+        # Latency: ~100-2000ms
+        # Cost: ~0.001-0.1
+        norm_lat = lat / 2000.0
         norm_cost = cost / 0.05
-        
+
         score = w_lat * norm_lat + w_cost * norm_cost
-        
+
         if score < best_score:
             best_score = score
             best_action = action_idx
-            
+
     return best_action
 
 def run_inference(
-    data_root='/root/autodl-tmp/MOE111/data',
+    data_root='./data',
     episodes=100,
     test_region='Server2',
-    split='train'  
+    split='train'  # 默认用训练集，和训练曲线对齐
 ):
+    # Load Dataset and Environment
     ds = WorkflowDataset(data_root, split=split, regions=[test_region])
     env = WorkflowMoEEnv(ds)
 
+    # 固定的Reward权重 (Aligned with PFAPPO)
     w = np.array([0.45, 0.40, 0.15], dtype=np.float32)
-    
+
     latencies = []
     costs = []
     rewards = []
     switches_list = []
     inference_times = []
-    
+
     print(f"Running Greedy inference on {episodes} episodes in {test_region}...")
-    
+
     for i in range(episodes):
         if i % 10 == 0:
             print(f"Episode {i}/{episodes}")
-        
+
         task = ds.tasks[i % len(ds.tasks)]
         env.reset(task)
-        
+
         ep_lat = 0
         ep_cost = 0
         ep_reward = 0
         ep_inference_time = 0
         done = False
-        
+
         while not done:
             t0 = time.time()
-    
+
+            # Greedy Action
             action = compute_greedy_action(env)
-            
+
             ep_inference_time += (time.time() - t0) * 1000
-            
+
             _, (rL, rC, rS), done, info = env.step(action)
-            
+
             r_scalar = w[0]*rL + w[1]*rC + w[2]*rS
-            
+
             ep_lat += info['latency_ms']
             ep_cost += info['cost']
             ep_reward += r_scalar
-            
+
         latencies.append(ep_lat)
         costs.append(ep_cost)
         rewards.append(ep_reward)
         switches_list.append(env.ep_switches)
         inference_times.append(ep_inference_time)
- 
+
+    # Statistics
     print("\n" + "="*50)
     print("Greedy Inference Results:")
     print("="*50)
@@ -92,10 +109,11 @@ def run_inference(
     print(f"Average Reward:  {np.mean(rewards):.4f}")
     print("="*50)
 
+    # Save Results
     output_dir = 'inference/results'
     os.makedirs(output_dir, exist_ok=True)
     npz_path = os.path.join(output_dir, f'Greedy_{test_region}_{split}_detailed.npz')
-    np.savez(npz_path, 
+    np.savez(npz_path,
              latencies=np.array(latencies),
              costs=np.array(costs),
              rewards=np.array(rewards),

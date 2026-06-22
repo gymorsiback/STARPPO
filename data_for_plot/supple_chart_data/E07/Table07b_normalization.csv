@@ -1,0 +1,10 @@
+Constant,Value,Unit,Source / Description,system.tex Symbol
+J_L_REF,5000.0,ms,env.py lat_worst（系统可能的最差延迟上限）,\bar{J}_L
+J_C_REF,0.2,USD/request,env.py cost_worst（含 compute + network + comm）,\bar{J}_C
+J_R_REF,1.0,dimensionless,"风险最大值定义为 1.0（kappa_rel=0.5, kappa_geo=0.5, max_switches=3）",\bar{J}_R
+SLA_MS,3000.0,ms,端到端 SLA 阈值，请求延迟超过此值算违约,T_m^{SLA}
+eta_L,0.45,dimensionless,延迟权重，η_L+η_C+η_R+η_S=1,\eta_L
+eta_C,0.35,dimensionless,成本权重,\eta_C
+eta_R,0.1,dimensionless,风险权重,\eta_R
+eta_S,0.1,dimensionless,SLA 违约权重,\eta_S
+Improvement_baseline,Greedy (2793.58 ms),ms,Improvement(%) = (Greedy_lat - algo_lat) / Greedy_lat × 100,—

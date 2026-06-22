@@ -1,0 +1,22 @@
+\begin{table}[htbp]
+\centering
+\caption{E04: Kingman Queue Approximation Error Under Different Traffic Patterns and Utilization Bins.
+$E[S]=385.3$ ms. Validation sweep: $\rho \in [0.05, 0.92]$.}
+\label{tab:e04_queue_error}
+\resizebox{\linewidth}{!}{%
+\begin{tabular}{llrrrrr}
+\toprule
+Traffic Pattern & Util.\ Bin & $c_a^2$ & $n$ & $\bar{\rho}$ & MAE (ms) $\pm$ Std & MAPE (\%) $\pm$ Std \\
+\midrule
+Poisson & Low (ρ<0.3) & 1.0 & 25 & 0.2200 & 9.165 $\pm$ 5.972 & 8.223 $\pm$ 4.947 \\
+ & Medium (0.3≤ρ<0.6) & 1.0 & 35 & 0.4530 & 26.155 $\pm$ 21.470 & 7.854 $\pm$ 5.035 \\
+ & High (ρ≥0.6) & 1.0 & 60 & 0.7530 & 216.182 $\pm$ 202.277 & 15.522 $\pm$ 12.330 \\
+Bursty & Low (ρ<0.3) & 2.5 & 25 & 0.2200 & 112.728 $\pm$ 35.091 & 54.721 $\pm$ 21.547 \\
+ & Medium (0.3≤ρ<0.6) & 2.5 & 35 & 0.4530 & 80.079 $\pm$ 71.311 & 12.773 $\pm$ 11.035 \\
+ & High (ρ≥0.6) & 2.5 & 60 & 0.7530 & 567.654 $\pm$ 538.408 & 19.914 $\pm$ 16.242 \\
+On-Off & Low (ρ<0.3) & 4.0 & 25 & 0.2200 & 93.924 $\pm$ 26.602 & 34.446 $\pm$ 6.742 \\
+ & Medium (0.3≤ρ<0.6) & 4.0 & 35 & 0.4530 & 233.379 $\pm$ 123.587 & 28.832 $\pm$ 10.681 \\
+ & High (ρ≥0.6) & 4.0 & 60 & 0.7530 & 745.809 $\pm$ 627.919 & 22.378 $\pm$ 14.405 \\
+\bottomrule
+\end{tabular}}
+\end{table}

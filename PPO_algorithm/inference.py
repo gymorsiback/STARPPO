@@ -8,14 +8,17 @@ from typing import Dict, List, Tuple, Any
 import numpy as np
 import torch
 
+# Import environment from shared env.py
 import sys
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 from env import WorkflowDataset, WorkflowMoEEnv
 
+# Import PPO components from local directory
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from agent import PPOAgent
 from train import build_state_vector
 
+# plotting for CDF
 try:
     from results.PPO.plotting import plot_cdf
 except Exception:
@@ -67,29 +70,37 @@ except Exception:
 
 
 def load_model(model_path: str, device: str = 'cpu'):
+    """Load PPO actor model from checkpoint (simplified version for actor-only .pt files)"""
     from model import Actor
- 
+
+    # Load actor state dict directly (new format: only state_dict)
+    # Actor(state_dim, num_servers)
     actor = Actor(state_dim=7, num_servers=500).to(device)
     actor.load_state_dict(torch.load(model_path, map_location=device))
     actor.eval()
-  
+
+    # Create a minimal PPOAgent wrapper (we only need the actor for inference)
     class MinimalAgent:
         def __init__(self, actor_net):
             self.actor = actor_net
-        
+
         def act(self, state_vec, action_feats, valid_actions):
+            """Deterministic action selection"""
             state_t = torch.FloatTensor(state_vec).unsqueeze(0).to(actor_net.device)
             with torch.no_grad():
-                logits = self.actor(state_t).squeeze(0) 
+                logits = self.actor(state_t).squeeze(0)  # [num_actions]
+                # Mask invalid actions
                 logits_np = logits.cpu().numpy()
                 logits_np[~np.isin(np.arange(len(logits_np)), valid_actions)] = -1e9
                 action_idx = int(np.argmax(logits_np))
             return action_idx, 0.0, 0.0, None
-    
+
     agent = MinimalAgent(actor)
- 
+
+    # Build action features (server features for all model instances)
+    # This is a placeholder - the new PPO doesn't use action_feats
     action_feats = None
-    
+
     return agent, action_feats
 
 
@@ -140,8 +151,10 @@ def eval_random(env: WorkflowMoEEnv, ds: WorkflowDataset, tasks: List[Dict[str, 
 
 
 def eval_round_robin(env: WorkflowMoEEnv, ds: WorkflowDataset, tasks: List[Dict[str, Any]]):
+    # Maintain a pointer per model type
     ptr: Dict[str, int] = {}
     latencies, costs = [], []
+    # Build valid list per model type from env
     model_type_to_idxs = env.model_type_to_action_idxs
     for task in tasks:
         state = env.reset(task)
@@ -153,6 +166,7 @@ def eval_round_robin(env: WorkflowMoEEnv, ds: WorkflowDataset, tasks: List[Dict[
             valid = env.available_actions()
             if not valid:
                 break
+            # Determine model type at this step
             _, _, req_type = env.cur_steps[env.step_idx]
             req_type = str(req_type)
             pool = model_type_to_idxs.get(req_type, [])
@@ -240,7 +254,9 @@ def run_inference(data_root: str,
 
     agent, action_feats = load_model(model_path, device=device)
 
+    # Determine DWA weight to use at inference: use last epoch's weights if run_dir provided
     if run_dir is not None and os.path.exists(os.path.join(run_dir, 'meta.json')):
+        # find latest npz
         files = [f for f in os.listdir(run_dir) if f.startswith('epoch_') and f.endswith('.npz')]
         files.sort()
         if files:
@@ -252,12 +268,15 @@ def run_inference(data_root: str,
     else:
         w = (0.5, 0.5, 0.0)
 
+    # Select tasks with multi-step workflows
     tasks = [t for t in ds.tasks if len(t['RequiredModelTypes']) >= 2]
     if max_episodes is not None:
         tasks = tasks[:max_episodes]
 
+    # Evaluate all algorithms
     lat_pp, cost_pp = eval_policy(env, ds, agent, action_feats, tasks, w)
 
+    # For fair comparison, re-instantiate env for each baseline to reset queues
     env2 = WorkflowMoEEnv(ds, device=device)
     lat_rand, cost_rand = eval_random(env2, ds, tasks)
 
@@ -270,6 +289,7 @@ def run_inference(data_root: str,
     env5 = WorkflowMoEEnv(ds, device=device)
     lat_gc, cost_gc = eval_greedy_cost(env5, ds, tasks)
 
+    # Save arrays
     results_root = os.path.join(os.path.dirname(os.path.dirname(data_root)), 'results', 'PPO')
     os.makedirs(results_root, exist_ok=True)
     out_npz = os.path.join(results_root, f"inference_{os.path.basename(model_path).replace('.pt','')}.npz")
@@ -280,6 +300,7 @@ def run_inference(data_root: str,
              lat_gl=np.array(lat_gl), cost_gl=np.array(cost_gl),
              lat_gc=np.array(lat_gc), cost_gc=np.array(cost_gc))
 
+    # Plot CDFs
     if plot_cdf is not None:
         lat_dict = {
             'PPO+DWA': lat_pp,
@@ -297,6 +318,7 @@ def run_inference(data_root: str,
         }
         plot_cdf(lat_dict, cost_dict, results_root, title_suffix='(Test Split)')
 
+    # Print statistics in unified format
     print("\n" + "="*50)
     print("Inference Results:")
     print("="*50)
@@ -311,7 +333,7 @@ def run_inference(data_root: str,
 if __name__ == '__main__':
     import argparse
     parser = argparse.ArgumentParser()
-    parser.add_argument('--data_root', type=str, default='/root/autodl-tmp/MOE111/data')
+    parser.add_argument('--data_root', type=str, default='./data')
     parser.add_argument('--model_path', type=str, required=False, default=None)
     parser.add_argument('--model', type=str, default=None, help='Alias for --model_path')
     parser.add_argument('--run_dir', type=str, default=None, help='results/PPO/logs/<run_id> for weights history')
@@ -321,8 +343,9 @@ if __name__ == '__main__':
     parser.add_argument('--seed', type=int, default=123)
     args = parser.parse_args()
 
+    # Handle parameter aliases
     model_path = args.model or args.model_path
     max_episodes = args.episodes or args.max_episodes
-    
+
     run_inference(args.data_root, model_path, args.run_dir, device=args.device, max_episodes=max_episodes, seed=args.seed)
 

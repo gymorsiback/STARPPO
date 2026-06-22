@@ -1,0 +1,20 @@
+\begin{table}[htbp]
+\centering
+\caption{E09: Statistical Tests for Traffic Robustness (Latency, ms).
+Mann-Whitney U (pairwise) and Kruskal-Wallis (omnibus); $n=600$ per group.}
+\label{tab:e09_stats}
+\resizebox{\linewidth}{!}{%
+\begin{tabular}{llllrrr}
+\toprule
+Metric & Group A & Group B & Test & Statistic & $p$-value & Effect Size \\
+\midrule
+latency_ms & All groups & --- & Kruskal-Wallis & 142.2251 & $2.21 \times 10^{-23}$ & --- \\
+latency_ms & Uniform (Training) & Poisson & Mann-Whitney U & 150800.0 & $1.15 \times 10^{-6}$ & 0.1622 \\
+latency_ms & Uniform (Training) & Bursty & Mann-Whitney U & 113136.0 & $8.28 \times 10^{-29}$ & 0.3715 \\
+latency_ms & Uniform (Training) & On-Off & Mann-Whitney U & 129399.0 & $3.50 \times 10^{-17}$ & 0.2811 \\
+latency_ms & Poisson & Bursty & Mann-Whitney U & 141309.0 & $1.16 \times 10^{-10}$ & 0.2149 \\
+latency_ms & Poisson & On-Off & Mann-Whitney U & 160142.0 & $9.39 \times 10^{-4}$ & 0.1103 \\
+latency_ms & Bursty & On-Off & Mann-Whitney U & 201920.0 & $2.60 \times 10^{-4}$ & -0.1218 \\
+\bottomrule
+\end{tabular}}
+\end{table}

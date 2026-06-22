@@ -1,0 +1,4 @@
+Failure Regime,SLA Violation (%),Avg Latency During Fail (ms),Mean p_rel,Avg Risk J_R^rel,Failure Windows,Burst Events,Mean Recovery Time (win)
+No Failure,0.0,2113.7,1.0,0.0,0,0,—
+Indep. Random,0.0,2112.5,0.9481,0.0519,0,0,—
+Burst (Markov ON/OFF),11.5,4348.0,0.8502,0.1498,23,4,5.75

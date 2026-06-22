@@ -1,0 +1,20 @@
+\begin{table}[htbp]
+\centering
+\caption{E07 Appendix: Normalization Constants and $\eta$ Weights for Composite QoS Score.}
+\label{tab:e07_normalization}
+\begin{tabular}{llll}
+\toprule
+Constant & Value & Unit & Description \\
+\midrule
+J\_L\_REF & 5000.0 & ms & env.py lat\_worst（系统可能的最差延迟上限） \\
+J\_C\_REF & 0.2 & USD/request & env.py cost\_worst（含 compute + network + comm） \\
+J\_R\_REF & 1.0 & dimensionless & 风险最大值定义为 1.0（kappa\_rel=0.5, kappa\_geo=0.5, max\_switches \\
+SLA\_MS & 3000.0 & ms & 端到端 SLA 阈值，请求延迟超过此值算违约 \\
+eta\_L & 0.45 & dimensionless & 延迟权重，η\_L+η\_C+η\_R+η\_S=1 \\
+eta\_C & 0.35 & dimensionless & 成本权重 \\
+eta\_R & 0.1 & dimensionless & 风险权重 \\
+eta\_S & 0.1 & dimensionless & SLA 违约权重 \\
+Improvement\_baseline & Greedy (2793.58 ms) & ms & Improvement(%) = (Greedy\_lat - algo\_lat) / Greedy\_lat × \\
+\bottomrule
+\end{tabular}
+\end{table}

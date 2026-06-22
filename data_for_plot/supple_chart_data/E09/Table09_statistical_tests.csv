@@ -1,0 +1,8 @@
+Experiment,Metric,Group A,Group B,Test,Statistic,p-value,Effect Size,n_A,n_B
+E09,latency_ms,All groups,—,Kruskal-Wallis,142.2251,2.2102e-23,—,2400,—
+E09,latency_ms,Uniform (Training),Poisson,Mann-Whitney U,150800.0,1.1482e-06,0.1622,600,600
+E09,latency_ms,Uniform (Training),Bursty,Mann-Whitney U,113136.0,8.2797e-29,0.3715,600,600
+E09,latency_ms,Uniform (Training),On-Off,Mann-Whitney U,129399.0,3.4988e-17,0.2811,600,600
+E09,latency_ms,Poisson,Bursty,Mann-Whitney U,141309.0,1.1553e-10,0.2149,600,600
+E09,latency_ms,Poisson,On-Off,Mann-Whitney U,160142.0,9.3880e-04,0.1103,600,600
+E09,latency_ms,Bursty,On-Off,Mann-Whitney U,201920.0,2.6046e-04,-0.1218,600,600

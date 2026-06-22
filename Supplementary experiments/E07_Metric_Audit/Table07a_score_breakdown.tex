@@ -1,0 +1,25 @@
+\begin{table}[htbp]
+\centering
+\caption{E07: Composite QoS Score Decomposition.
+$Q = \eta_L(1-\hat{J}_L)+\eta_C(1-\hat{J}_C)+\eta_R(1-\hat{J}_R)+\eta_S(1-V_{\rm SLA})$,
+with $\eta_L=0.45, \eta_C=0.35, \eta_R=0.10, \eta_S=0.10$.
+Improvement (\%) is relative to Greedy baseline ($J_L=2793.6$ ms).}
+\label{tab:e07_score}
+\resizebox{\linewidth}{!}{%
+\begin{tabular}{lrrrrrrrrc}
+\toprule
+Algorithm & $J_L$ (ms) & $J_C$ (\$) & $J_R$ & $V_{\rm SLA}$ & $\hat{J}_L$ & $\hat{J}_C$ & $\hat{J}_R$ & QoS Score & Improv.\ (\%) \\
+\midrule
+STAR-PPO (Ours) & 2112.2 & 0.0755 & 0.000 & 0.185 & 0.4224 & 0.3773 & 0.0000 & 65.93 & 24.4 \\
+A3C & 2135.4 & 0.0916 & 0.585 & 0.195 & 0.4271 & 0.4580 & 0.5850 & 56.95 & 23.6 \\
+Equity-Trans & 2158.8 & 0.0896 & 0.582 & 0.200 & 0.4318 & 0.4480 & 0.5817 & 57.07 & 22.7 \\
+PPO-CN & 2185.2 & 0.0812 & 0.575 & 0.220 & 0.4370 & 0.4060 & 0.5750 & 58.17 & 21.8 \\
+STARK (IL) & 2358.9 & 0.1485 & 0.620 & 0.245 & 0.4718 & 0.7425 & 0.6200 & 44.13 & 15.6 \\
+PPO-Std & 2634.6 & 0.0978 & 0.598 & 0.220 & 0.5269 & 0.4890 & 0.5983 & 50.99 & 5.7 \\
+PF-PPO & 2726.2 & 0.2522 & 0.608 & 0.325 & 0.5452 & 1.0000 & 0.6083 & 31.13 & 2.4 \\
+GA-PPO & 2744.8 & 0.2545 & 0.618 & 0.340 & 0.5490 & 1.0000 & 0.6183 & 30.71 & 1.7 \\
+Greedy & 2793.6 & 0.2709 & 0.623 & 0.315 & 0.5587 & 1.0000 & 0.6233 & 30.47 & 0.0 \\
+Random & 3868.8 & 0.2165 & 0.623 & 0.565 & 0.7738 & 1.0000 & 0.6233 & 18.30 & -38.5 \\
+\bottomrule
+\end{tabular}}
+\end{table}

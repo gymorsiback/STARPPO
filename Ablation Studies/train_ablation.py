@@ -1,3 +1,13 @@
+"""
+STAR-PPO Ablation Training Script
+消融实验训练脚本 - 通过控制变量法验证各组件贡献
+
+Variants:
+- full: 完整模型 (已有 checkpoint，不需重训)
+- no_workflow: 去除工作流感知 (step_norm = 0)
+- no_future: 去除未来奖励 (gamma = 0)
+- no_topology: 去除拓扑感知 (地理+网络质量全部屏蔽)
+"""
 
 import os
 import sys
@@ -7,13 +17,15 @@ import numpy as np
 import torch
 from collections import deque
 
+# Add root
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 
 from env import WorkflowDataset
 from utils import ensure_dir, generate_run_id, softmax
-from STAR_PPO.env_augmented import AugmentedWorkflowEnv
-from STAR_PPO.agent import StarPPOAgent
+from TopoFreeRL.env_augmented import AugmentedWorkflowEnv
+from TopoFreeRL.agent import StarPPOAgent
 
+# ======================== Helper Functions ========================
 
 def build_server_model_mapping(ds, env):
     server_ids = sorted(list(env.servers.keys()))
@@ -38,6 +50,12 @@ def map_server_action_to_instance(server_idx, required_model_type, mapping, ds, 
     return fallback_action
 
 def compute_resource_weights(env, dwa_weights=None, disable_network_quality=False):
+    """
+    计算 resource_weights
+
+    Args:
+        disable_network_quality: 当 True 时，禁用网络质量感知 (用于 no_topology 消融)
+    """
     if dwa_weights is not None:
         w_L, w_C = dwa_weights[0], dwa_weights[1]
         scale_L = w_L / 0.33
@@ -50,21 +68,23 @@ def compute_resource_weights(env, dwa_weights=None, disable_network_quality=Fals
 
     server_ids = sorted(list(env.servers.keys()))
     num_servers = len(server_ids)
-    
+
     caps = np.array([env.servers[sid].normalized_compute for sid in server_ids], dtype=np.float32)
     norm_caps = caps
 
+    # 计算成本优势
     cost_mults = np.array([env.servers[sid].cost_multiplier for sid in server_ids], dtype=np.float32)
     cost_advantage = 1.0 - np.clip(cost_mults / 2.0, 0, 1.0)
-    
+
     current_time = env.current_time_ms
     busy_times = np.array([max(0.0, env.busy_until[sid] - current_time) for sid in server_ids], dtype=np.float32)
     norm_queues = np.clip(busy_times / 5000.0, 0.0, 1.0)
-    
+
     w2_queue = 0.30
     weights = norm_caps / (1.0 + w2_queue * norm_queues)
     weights = weights * (0.5 + 0.5 * cost_advantage)
 
+    # === 网络质量感知 (可被消融) ===
     if not disable_network_quality:
         network_quality = np.ones(num_servers, dtype=np.float32)
         if hasattr(env, 'link_latency') and len(env.link_latency) > 0:
@@ -77,36 +97,54 @@ def compute_resource_weights(env, dwa_weights=None, disable_network_quality=Fals
                     avg_lat = np.mean(outbound_lats)
                     network_quality[i] = np.exp(-avg_lat / 500.0)
         weights = weights * network_quality
-    
+
     max_w = np.max(weights)
     if max_w > 1e-9:
         weights = weights / max_w
     else:
         weights = np.ones_like(weights) / num_servers
-    
+
     return weights
 
 
 class AblationEnv(AugmentedWorkflowEnv):
+    """
+    消融环境包装器 - 支持屏蔽特定状态特征
+    """
     def __init__(self, dataset, ablation_mode='full', **kwargs):
         super().__init__(dataset, **kwargs)
         self.ablation_mode = ablation_mode
-        
+
     def get_augmented_state(self, dwa_weights=None):
+        """
+        返回消融后的状态向量
+        """
+        # 获取原始状态
         state = super().get_augmented_state(dwa_weights)
-   
+
+        # 根据消融模式修改状态
         if self.ablation_mode == 'no_workflow':
+            # 屏蔽工作流进度信息 (step_norm at index 0)
             state[0] = 0.0
-            
+
         elif self.ablation_mode == 'no_topology':
-            state[1] = 0.0  
-            state[2] = 0.0  
-            state[3] = 0.0  
-            state[7] = 0.0  
-            state[8] = 0.0  
-            state[9] = 0.0  
- 
-        
+            # 屏蔽所有拓扑/地理信息
+            # Index 1: task_lon -> 0
+            # Index 2: task_lat -> 0
+            # Index 3: prev_region_id -> 0
+            # Index 7: norm_nbr_congestion -> 0
+            # Index 8: norm_bw -> 0
+            # Index 9: is_near_hc -> 0
+            state[1] = 0.0  # task_lon
+            state[2] = 0.0  # task_lat
+            state[3] = 0.0  # prev_region_id
+            state[7] = 0.0  # norm_nbr_congestion
+            state[8] = 0.0  # norm_bw
+            state[9] = 0.0  # is_near_hc
+
+        # no_future 不修改状态，只修改 gamma
+        # full 不做任何修改
+
         return state
 
 
@@ -121,19 +159,26 @@ def train_ablation(
     seed=42,
     regions=None
 ):
+    """
+    消融训练主函数
+
+    Args:
+        ablation_mode: 'full', 'no_workflow', 'no_future', 'no_topology'
+    """
     random.seed(seed)
     np.random.seed(seed)
     torch.manual_seed(seed)
-    
+
     if data_root is None:
         project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
         data_root = os.path.join(project_root, 'data')
-    
-    
+
+    # 使用 Server1_Trap 数据集
     if regions is None:
         regions = ['Server1']
     target_region = regions[0]
 
+    # === 加载陷阱配置 (用于 no_topology 额外惩罚) ===
     trap_server_ids = set()
     trap_path = os.path.join(data_root, target_region, 'trap_config.json')
     if os.path.exists(trap_path):
@@ -141,59 +186,67 @@ def train_ablation(
             trap_cfg = json.load(f)
         trap_server_ids = set(trap_cfg.get('trap_server_ids', []))
         print(f"Loaded {len(trap_server_ids)} trap servers for penalty injection")
-    
+
     print(f"=" * 60)
     print(f"STAR-PPO Ablation Training")
     print(f"Mode: {ablation_mode}")
     print(f"Region: {target_region}")
     print(f"Epochs: {total_epochs}")
     print(f"=" * 60)
-    
+
     ds = WorkflowDataset(data_root, split='train', regions=[target_region])
     env = AblationEnv(ds, ablation_mode=ablation_mode)
     num_servers = len(env.servers)
-    
+
     server_model_mapping, _ = build_server_model_mapping(ds, env)
-  
+
+    # State Dim: 10 (7 base + 3 topo)
     agent = StarPPOAgent(state_dim=10, num_servers=num_servers, lr=lr, device=device)
 
+    # 输出目录 (包含种子信息，支持多次实验)
     ablation_dir = os.path.dirname(os.path.abspath(__file__))
     results_dir = os.path.join(ablation_dir, 'results', f'{ablation_mode}_seed{seed}')
     models_dir = os.path.join(results_dir, 'models')
     ensure_dir(results_dir)
     ensure_dir(models_dir)
- 
+
+    # Gamma 设置 (关键消融参数)
     if ablation_mode == 'no_future':
-        gamma = 0.0  
+        gamma = 0.0  # 完全短视
         print(">>> [ABLATION] Gamma set to 0.0 (Myopic Agent)")
     else:
-        gamma = 0.99 
-  
+        gamma = 0.99  # 正常值
+
+    # 是否禁用网络质量
     disable_network = (ablation_mode == 'no_topology')
     if disable_network:
         print(">>> [ABLATION] Network Quality disabled in resource_weights")
 
+    # Schedulers
     lr_lambda = lambda epoch: 1.0 - 0.8 * (epoch / total_epochs)
     actor_scheduler = torch.optim.lr_scheduler.LambdaLR(agent.actor_optimizer, lr_lambda=lr_lambda)
     critic_scheduler = torch.optim.lr_scheduler.LambdaLR(agent.critic_optimizer, lr_lambda=lr_lambda)
- 
+
+    # DWA Setup
     w = np.array([0.45, 0.40, 0.15], dtype=np.float32)
-    loss_moving_avg = np.zeros(3) 
+    loss_moving_avg = np.zeros(3)
     T = 3.0
     freeze_epoch = int(total_epochs * 0.8)
     dwa_start_epoch = 3
-    
+
     L_hist = {'L': [], 'C': [], 'S': []}
 
+    # 记录训练曲线
     epoch_rewards_history = []
     epoch_latency_history = []
     epoch_cost_history = []
-    
+
     for epoch in range(total_epochs):
         ent_coef = max(0.002, 0.03 - (0.028 * epoch / (total_epochs * 0.9)))
         progress = epoch / total_epochs
         guidance_alpha = 0.6 + 0.6 * progress
-   
+
+        # DWA Logic
         if epoch >= dwa_start_epoch and epoch < freeze_epoch:
             current_losses = np.array([
                 np.mean(ep_L_vals) if 'ep_L_vals' in locals() and len(ep_L_vals) > 0 else 0.0,
@@ -204,7 +257,7 @@ def train_ablation(
                 loss_moving_avg = current_losses + 1e-6
             else:
                 loss_moving_avg = 0.15 * current_losses + 0.85 * loss_moving_avg
-            
+
             if np.mean(np.abs(current_losses)) > 1e-5:
                 r_n = current_losses / (loss_moving_avg + 1e-7)
                 r_n = np.clip(r_n, 0.7, 1.3)
@@ -218,97 +271,98 @@ def train_ablation(
         ep_L_vals = []
         ep_C_vals = []
         ep_S_vals = []
-        
+
         memory_states = []
         memory_weights = []
         memory_actions = []
         memory_logprobs = []
         memory_rewards = []
         memory_values = []
-        
+
         ep_returns = []
         ep_lats = []
         ep_costs = []
-        
+
         for ep in range(episodes_per_epoch):
             task = random.choice(ds.tasks)
             env.reset(task)
             s_vec = env.get_augmented_state(dwa_weights=w)
-            
+
             done = False
-            
+
             traj_states = []
             traj_weights = []
             traj_actions = []
             traj_logprobs = []
             traj_rewards = []
             traj_values = []
-            
+
             ep_ret = 0
             ep_l_raw = 0
             ep_c_raw = 0
-            
+
             while not done:
-                r_weights = compute_resource_weights(env, dwa_weights=w, 
+                r_weights = compute_resource_weights(env, dwa_weights=w,
                                                      disable_network_quality=disable_network)
-                
+
                 s_tensor = torch.FloatTensor(s_vec).unsqueeze(0).to(device)
                 w_tensor = torch.FloatTensor(r_weights).unsqueeze(0).to(device)
-                
+
                 action_idx, log_prob, value = agent.act(s_tensor, w_tensor, guidance_alpha=guidance_alpha)
-                
+
                 _, _, req_type = env.cur_steps[env.step_idx]
                 if req_type is None:
                      req_type = env.cur_task['RequiredModelTypes'][env.step_idx]
-                     
+
                 real_action = map_server_action_to_instance(
                     action_idx, str(req_type), server_model_mapping, ds
                 )
-                
+
                 _, (rL, rC, rS), done, info = env.step(real_action)
-                
+
                 next_s_vec = env.get_augmented_state(dwa_weights=w)
-                
+
                 r_scalar = w[0]*rL + w[1]*rC + w[2]*rS
-                
+
                 traj_states.append(s_vec)
                 traj_weights.append(r_weights)
                 traj_actions.append(action_idx)
                 traj_logprobs.append(log_prob)
                 traj_rewards.append(r_scalar)
                 traj_values.append(value)
-                
+
                 s_vec = next_s_vec
                 ep_ret += r_scalar
                 ep_l_raw += info['latency_ms']
                 ep_c_raw += info['cost']
-                
+
                 ep_L_vals.append(-rL)
                 ep_C_vals.append(-rC)
                 ep_S_vals.append(-rS)
-      
+
+            # GAE 计算 (使用可变 gamma)
             next_value = 0
             gae = 0
             lam = 0.95
             returns = []
-            
+
             for step in reversed(range(len(traj_rewards))):
                 delta = traj_rewards[step] + gamma * next_value - traj_values[step]
                 gae = delta + gamma * lam * gae
                 returns.insert(0, gae + traj_values[step])
                 next_value = traj_values[step]
-                
+
             memory_states.extend(traj_states)
             memory_weights.extend(traj_weights)
             memory_actions.extend(traj_actions)
             memory_logprobs.extend(traj_logprobs)
             memory_rewards.extend(returns)
             memory_values.extend(traj_values)
-            
+
             ep_returns.append(ep_ret)
             ep_lats.append(ep_l_raw)
             ep_costs.append(ep_c_raw)
-            
+
         states_t = torch.FloatTensor(np.array(memory_states))
         weights_t = torch.FloatTensor(np.array(memory_weights))
         actions_t = torch.LongTensor(np.array(memory_actions))
@@ -316,63 +370,65 @@ def train_ablation(
         returns_t = torch.FloatTensor(np.array(memory_rewards))
         values_t = torch.FloatTensor(np.array(memory_values))
         advantages_t = returns_t - values_t
-        
+
         dataset_size = len(states_t)
         indices = np.arange(dataset_size)
         agent_loss = 0
-        
+
         for _ in range(10):
             np.random.shuffle(indices)
             for start in range(0, dataset_size, batch_size):
                 end = start + batch_size
                 idx = indices[start:end]
-                
+
                 loss = agent.update_from_batch(
                     states_t[idx], weights_t[idx], actions_t[idx],
                     logprobs_t[idx], returns_t[idx], advantages_t[idx],
                     entropy_coef=ent_coef
                 )
                 agent_loss += loss
-        
+
         avg_loss = agent_loss / (10 * (dataset_size // batch_size + 1))
         avg_ret = np.mean(ep_returns)
         avg_lat = np.mean(ep_lats)
         avg_cost = np.mean(ep_costs)
-        
+
         epoch_rewards_history.append(avg_ret)
         epoch_latency_history.append(avg_lat)
         epoch_cost_history.append(avg_cost)
-        
+
         L_hist['L'].append(np.mean(ep_L_vals))
         L_hist['C'].append(np.mean(ep_C_vals))
         L_hist['S'].append(np.mean(ep_S_vals))
-        
+
         print(f"[{ablation_mode}] Epoch {epoch+1}/{total_epochs} | "
               f"Ret: {avg_ret:.2f} | Lat: {avg_lat:.1f}ms | Cost: {avg_cost:.3f} | "
               f"Loss: {avg_loss:.4f}")
-  
+
+        # 每5个epoch保存模型
         if (epoch+1) % 5 == 0:
-            torch.save(agent.actor.state_dict(), 
+            torch.save(agent.actor.state_dict(),
                       os.path.join(models_dir, f'{ablation_mode}_actor_epoch_{epoch+1}.pt'))
-        
+
         actor_scheduler.step()
         critic_scheduler.step()
- 
-    torch.save(agent.actor.state_dict(), 
+
+    # 保存最终模型和训练曲线
+    torch.save(agent.actor.state_dict(),
               os.path.join(models_dir, f'{ablation_mode}_actor_final.pt'))
-    
+
     np.savez(os.path.join(results_dir, 'metrics.npz'),
              rewards=np.array(epoch_rewards_history),
              latency=np.array(epoch_latency_history),
              cost=np.array(epoch_cost_history))
-    
+
     print(f"\n{'='*60}")
     print(f"Training Completed for mode: {ablation_mode}")
     print(f"Final Avg Latency: {epoch_latency_history[-1]:.1f}ms")
     print(f"Final Avg Cost: {epoch_cost_history[-1]:.3f}")
     print(f"Model saved to: {models_dir}")
     print(f"{'='*60}\n")
-    
+
     return {
         'rewards': epoch_rewards_history,
         'latency': epoch_latency_history,
@@ -390,15 +446,15 @@ if __name__ == '__main__':
     parser.add_argument('--episodes', type=int, default=200)
     parser.add_argument('--device', type=str, default='cpu')
     parser.add_argument('--seed', type=int, default=42)
-    parser.add_argument('--data', type=str, default='/root/autodl-tmp/MOE111/data1',
+    parser.add_argument('--data', type=str, default='./data1',
                         help='Data directory')
     parser.add_argument('--region', type=str, default='Server1_Trap',
                         help='Region to train on (default: Server1_Trap)')
     args = parser.parse_args()
-    
+
     if args.device == 'cuda' and not torch.cuda.is_available():
         args.device = 'cpu'
-    
+
     train_ablation(
         ablation_mode=args.mode,
         data_root=args.data,
@@ -408,4 +464,3 @@ if __name__ == '__main__':
         seed=args.seed,
         regions=[args.region]
     )
-

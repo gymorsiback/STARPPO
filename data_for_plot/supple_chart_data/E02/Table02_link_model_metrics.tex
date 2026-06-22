@@ -1,0 +1,17 @@
+\begin{table}[htbp]
+\centering
+\caption{E02: Per-Component Latency and Cost Under Different Link Models.
+All results from same algorithm, workload, and seed.}
+\label{tab:e02_link_model}
+\resizebox{\linewidth}{!}{%
+\begin{tabular}{llrrrrrr}
+\toprule
+Algorithm & Link Model & $R_{ij}$ (Mbps) & $T_{\rm base}$ (ms) & $T_{\rm net}$ (ms) & $T_{\rm comp}$ (ms) & Avg Lat.\ (ms) $\pm$ Std & Avg Cost (USD) \\
+\midrule
+Greedy & Service-Overlay & 100.0 & 150.00 & 149.2667 & 223.99 & 1866.3 $\pm$ 544.5 & 0.0610 \\
+Random & Service-Overlay & 99.8 & 23.68 & 23.3529 & 421.67 & 2225.1 $\pm$ 1220.2 & 0.1061 \\
+TopoFreeRL-Overlay & Service-Overlay & 96.7 & 0.22 & 0.3697 & 243.93 & 1221.5 $\pm$ 567.2 & 0.0435 \\
+TopoFreeRL-Wireless & Wireless-Edge & 100.0 & 0.21 & 0.3551 & 241.82 & 1210.9 $\pm$ 566.0 & 0.0409 \\
+\bottomrule
+\end{tabular}}
+\end{table}

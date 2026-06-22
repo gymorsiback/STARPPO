@@ -23,10 +23,12 @@ def latest_symlink(target_path: str, latest_path: str):
             try:
                 os.remove(latest_path)
             except IsADirectoryError:
+                # Remove directory if accidentally exists
                 import shutil
                 shutil.rmtree(latest_path)
         os.symlink(os.path.basename(target_path), latest_path)
     except Exception:
+        # Fallback: copy file
         import shutil
         shutil.copyfile(target_path, latest_path)
 
@@ -36,17 +38,20 @@ def moving_average(x: List[float], w: int) -> np.ndarray:
         return np.array(x, dtype=float)
     cumsum = np.cumsum(np.insert(np.array(x, dtype=float), 0, 0))
     ma = (cumsum[w:] - cumsum[:-w]) / float(w)
+    # pad to original length
     pad_left = [ma[0]] * (w - 1) if len(ma) > 0 else [x[0]] * (w - 1)
     return np.array(pad_left.tolist() + ma.tolist())
 
 
 def haversine_km(lon1, lat1, lon2, lat2):
+    # Convert decimal degrees to radians
     lon1, lat1, lon2, lat2 = map(math.radians, [lon1, lat1, lon2, lat2])
+    # haversine formula
     dlon = lon2 - lon1
     dlat = lat2 - lat1
     a = math.sin(dlat / 2) ** 2 + math.cos(lat1) * math.cos(lat2) * math.sin(dlon / 2) ** 2
     c = 2 * math.asin(math.sqrt(a))
-    r = 6371  
+    r = 6371  # Radius of earth in kilometers.
     return c * r
 
 
@@ -68,15 +73,20 @@ def softmax(x: np.ndarray, T: float = 1.0) -> np.ndarray:
 
 
 def parse_required_models(cell: str) -> List[str]:
+    """Parse RequiredModelTypes field which is a JSON-like string.
+    Example: "[\"ChatGPT\", \"GPT-4\"]"
+    """
     if isinstance(cell, list):
         return cell
     try:
         return json.loads(cell)
     except Exception:
+        # try to sanitize double quotes duplication
         try:
             fixed = cell.replace('""', '"')
             return json.loads(fixed)
         except Exception:
+            # fallback: naive parsing
             return [s.strip().strip('"').strip("'") for s in cell.strip('[]').split(',') if s.strip()]
 
 

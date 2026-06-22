@@ -12,7 +12,7 @@ class Actor(nn.Module):
             nn.Tanh(),
             nn.Linear(hidden_dim, action_dim)
         )
-        
+
     def forward(self, state):
         return self.net(state)
 
@@ -26,7 +26,7 @@ class Critic(nn.Module):
             nn.Tanh(),
             nn.Linear(hidden_dim, 1)
         )
-        
+
     def forward(self, state):
         return self.net(state)
 

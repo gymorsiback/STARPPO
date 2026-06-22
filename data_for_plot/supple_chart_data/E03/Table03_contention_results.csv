@@ -1,0 +1,6 @@
+Condition,Avg Latency (ms),Std Latency (ms),SLA Violation (%),Q_net (norm),Congestion Windows,Lat Increase vs Baseline
+Baseline (sum W_ij free),2110.6,26.5,18.29,0.571,0,N/A
+Constrained (sum W_ij ≤ W_max),2153.0,62.7,23.07,0.939,64,+42.4 ms (2.0%)
+Group 0: Region-A Backhaul,—,—,—,—,28,R_ij degr. 2.2%
+Group 1: Cloud Egress,—,—,—,—,37,R_ij degr. 4.1%
+Group 2: Cross-Region WAN,—,—,—,—,28,R_ij degr. 2.7%

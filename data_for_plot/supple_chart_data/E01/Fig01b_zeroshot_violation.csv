@@ -1,0 +1,7 @@
+Algorithm,Train Topology,Test Topology,Protocol,Avg Latency (ms),P95 Latency (ms),P99 Latency (ms),SLA Violation (%),Gap vs Retrained
+TopoFreeRL Retrained (S3),"Server1_Trap (Switzerland, 500 nodes)","Server3_Trap (Germany, 2000 nodes)",No fine-tune on target; model from source topology only,2151.5,4050.3,4851.8,19.5,1.0
+TopoFreeRL Partition (Zero),"Server1_Trap (Switzerland, 500 nodes)","Server3_Trap (Germany, 2000 nodes)",No fine-tune on target; model from source topology only,2349.6,4461.0,5406.4,28.5,1.092
+PF-PPO (Zero),"Server1_Trap (Switzerland, 500 nodes)","Server3_Trap (Germany, 2000 nodes)",No fine-tune on target; model from source topology only,3705.3,8028.0,10763.4,53.0,1.722
+Equity-Trans (Zero),"Server1_Trap (Switzerland, 500 nodes)","Server3_Trap (Germany, 2000 nodes)",No fine-tune on target; model from source topology only,3944.2,9024.4,10765.4,55.5,1.833
+A3C (Zero),"Server1_Trap (Switzerland, 500 nodes)","Server3_Trap (Germany, 2000 nodes)",No fine-tune on target; model from source topology only,3343.1,7065.9,8865.0,51.5,1.554
+STARK (Zero),"Server1_Trap (Switzerland, 500 nodes)","Server3_Trap (Germany, 2000 nodes)",No fine-tune on target; model from source topology only,3646.5,7259.1,9933.7,55.0,1.695

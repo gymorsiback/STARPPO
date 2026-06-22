@@ -1,0 +1,20 @@
+\begin{table}[htbp]
+\centering
+\caption{E06: DWA Weight Evolution and Per-Objective Loss Reduction (5 seeds, 100 epochs).
+$\omega_S$ is automatically upweighted from 0.15 to $\approx$0.32, accelerating SLA convergence.}
+\label{tab:e06_dwa}
+\resizebox{\linewidth}{!}{%
+\begin{tabular}{crrrrrrrr}
+\toprule
+Seed & $\omega_S^{\rm init}$ & $\omega_S^{\rm frozen}$ & $\Delta\omega_S$ (\%) & $L_L^{(1)}$ & $L_L^{\rm final}$ & $L_S^{(1)}$ & $L_S^{\rm final}$ & $L_S$ Reduction (\%) \\
+\midrule
+42 & 0.150 & 0.3208 & +113.9 & 0.5595 & 0.1183 & 0.2713 & 0.0574 & 78.8 \\
+43 & 0.150 & 0.3152 & +110.1 & 0.6114 & 0.1199 & 0.2292 & 0.0576 & 74.9 \\
+44 & 0.150 & 0.3182 & +112.1 & 0.5972 & 0.1170 & 0.2305 & 0.0567 & 75.4 \\
+45 & 0.150 & 0.3227 & +115.2 & 0.6371 & 0.1179 & 0.2516 & 0.0578 & 77.0 \\
+46 & 0.150 & 0.3182 & +112.1 & 0.5558 & 0.1194 & 0.2493 & 0.0585 & 76.5 \\
+\midrule
+Mean & 0.150 & 0.3190 & +112.7 & 0.5922 & 0.1185 & 0.2464 & 0.0576 & 76.5 \\
+\bottomrule
+\end{tabular}}
+\end{table}

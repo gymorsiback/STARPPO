@@ -11,24 +11,28 @@ def run_batch():
     parser.add_argument('--episodes', type=int, default=200, help='Episodes per epoch')
     args = parser.parse_args()
 
+    # Seeds for reproducibility
+    # PFAPPO uses 100+, PPO uses 200+. We use 300+ for A3C to distinguish.
     seeds = [300 + i for i in range(args.n)]
-    
+
     script_path = os.path.join(os.path.dirname(__file__), 'train.py')
-    
+
     print(f"Starting Batch Training for A3C_algorithm: {args.n} runs, {args.epochs} epochs each")
-    
+
     for i, seed in enumerate(seeds):
         print(f"\n[{i+1}/{args.n}] Starting Run with Seed {seed}...")
         start_time = time.time()
-        
+
         cmd = [
             'python', script_path,
             '--epochs', str(args.epochs),
             '--episodes', str(args.episodes),
             '--seed', str(seed)
         ]
-        
+
         try:
+            # We want to see output? Stark hides it mostly.
+            # A3C train.py prints every epoch.
             subprocess.run(cmd, check=True)
             duration = time.time() - start_time
             print(f"[{i+1}/{args.n}] Run finished in {duration:.1f}s")
